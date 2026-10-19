@@ -41,6 +41,10 @@ const PANEL_COLOR = 0xff7518;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMITS = new Map();
 
+// Public base URL used by clients. Prefer explicit env var, fall back to Render URL.
+const PUBLIC_BASE = (process.env.CLIENT_BASE_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "") || null;
+const CLIENT_REDEEM_URL = PUBLIC_BASE ? `${PUBLIC_BASE}/client/redeem` : null;
+
 // ==================== DISCORD CLIENT ====================
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
@@ -510,11 +514,15 @@ async function setScriptRoles(member, enabled, scriptType = "both") {
 }
 
 async function sendScriptDM(user, scriptType) {
-  const script = `loadstring(game:HttpGet("${LOADER_URL}"))()`;
+  // If CLIENT_REDEEM_URL isn't configured, fall back to the old direct loader URL.
+  const clientRedeem = CLIENT_REDEEM_URL || (PUBLIC_BASE ? `${PUBLIC_BASE}/client/redeem` : null);
+
+  // Lua loader: posts username + key + hwid to /client/redeem, fetches loaderUrl, then executes it.
+  const script = `-- Jayce loader (paste into your exploit executor)\n-- Replace USERNAME and KEY with your values\nlocal USERNAME = \"YOUR_ROBLOX_USERNAME\"\nlocal KEY = \"JAYCE-REPLACE-KEY\"\nlocal HWID = (pcall(function() return game:GetService(\"RbxAnalyticsService\"):GetClientId() end) and game:GetService(\"RbxAnalyticsService\"):GetClientId()) or \"unknown-hwid\"\nlocal HttpService = game:GetService(\"HttpService\")\nlocal ok, response = pcall(function()\n  local request = (request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))\n  if not request then error(\"Executor does not support HTTP requests.\") end\n  return request({\n    Url = \"${clientRedeem || "https://your-app.example.com/client/redeem"}\",\n    Method = \"POST\",\n    Headers = { [\"Content-Type\"] = \"application/json\" },\n    Body = HttpService:JSONEncode({ username = USERNAME, key = KEY, hwid = HWID })\n  })\nend)\nif not ok then error(\"[/jayce] Could not reach server: \" .. tostring(response)) end\nlocal data = HttpService:JSONDecode(response.Body)\nif not data.ok then error(\"[/jayce] \" .. tostring(data.error or \"Redeem failed\")) end\nlocal loaderUrl = data.loaderUrl\nif not loaderUrl then error(\"[/jayce] No loader URL returned from server\") end\nlocal ok2, resp2 = pcall(function()\n  local request = (request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))\n  return request({ Url = loaderUrl, Method = \"GET\" })\nend)\nif not ok2 then error(\"[/jayce] Could not fetch loader: \" .. tostring(resp2)) end\nlocal code = resp2.Body\nlocal func, err = loadstring(code)\nif not func then error(\"[/jayce] Failed to load loader: \" .. tostring(err)) end\npcall(func)\n`;
 
   const embed = makeEmbed(
     scriptType === "mobile" ? "📱 Jayce Mobile Main" : "🕸️ Jayce Main Script",
-    "Here is your script. Keep it private. ♡"
+    "Here is your script. Keep it private. Replace the placeholders inside the script before running. ♡"
   );
 
   await user.send({
@@ -778,4 +786,3 @@ client.on("interactionCreate", async (interaction) => {
             ephemeral: true,
           });
 
-... (file continues unchanged)
