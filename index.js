@@ -17,6 +17,7 @@ const { SlashCommandBuilder } = require("@discordjs/builders");
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 // ==================== CONFIG ====================
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -61,8 +62,6 @@ app.listen(PORT, "0.0.0.0", () => {
 });
 
 // ==================== KEEP-ALIVE PINGS ====================
-// Configure KEEP_ALIVE_URL to your public service URL (e.g. https://your-service.onrender.com/)
-// or an external hc-ping / UptimeRobot / Pingdom endpoint. If not set, no pings run.
 const KEEP_ALIVE_URL = process.env.KEEP_ALIVE_URL || process.env.RENDER_EXTERNAL_URL;
 
 if (KEEP_ALIVE_URL) {
@@ -76,18 +75,14 @@ if (KEEP_ALIVE_URL) {
       const lib = urlObj.protocol === "http:" ? http : https;
 
       const req = lib.get(KEEP_ALIVE_URL, (res) => {
-        // consume body to avoid memory leaks
         res.on("data", () => {});
-        res.on("end", () => {
-          // optional: could log res.statusCode in debug mode
-        });
+        res.on("end", () => {});
       });
 
       req.on("error", (err) => {
         console.error("[KEEPALIVE] Ping error:", err.message);
       });
 
-      // safety timeout
       req.setTimeout(10_000, () => {
         req.abort();
       });
@@ -96,11 +91,8 @@ if (KEEP_ALIVE_URL) {
     }
   }
 
-  // ping every 4 minutes (use a value < 10 minutes for many free hosts)
   const INTERVAL_MS = 4 * 60 * 1000;
   setInterval(pingKeepAlive, INTERVAL_MS);
-
-  // initial delayed ping so server has started
   setTimeout(pingKeepAlive, 5_000);
 
   console.log(`[KEEPALIVE] Keep-alive pings enabled for ${KEEP_ALIVE_URL}`);
@@ -186,7 +178,6 @@ function replyWithHeart(interaction, options) {
 
   if (Array.isArray(options.embeds)) {
     options.embeds = options.embeds.map((embed) => {
-      // embed may be an EmbedBuilder instance
       const title = embed.data?.title;
       if (typeof title === "string" && !title.trimStart().startsWith("♡")) {
         embed.setTitle(`♡ ${title}`);
@@ -207,6 +198,33 @@ function makeCode(length = 24) {
   }
 
   return result;
+}
+
+function makeKey() {
+  let key;
+  do {
+    key = `JAYCE-${makeCode(20)}`;
+  } while (db.keys[key]);
+  return key;
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return { salt, hash };
+}
+
+function verifyPassword(stored, password) {
+  if (!stored || !stored.salt || !stored.hash) return false;
+  const hash = crypto.scryptSync(password, stored.salt, 64).toString("hex");
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(hash, "hex"),
+      Buffer.from(stored.hash, "hex")
+    );
+  } catch (e) {
+    return false;
+  }
 }
 
 async function getGuildMember(guild, userId) {
@@ -261,7 +279,6 @@ async function sendScriptDM(user, scriptType) {
   });
 }
 
-// ==================== SLASH COMMANDS ====================
 const commands = [
   new SlashCommandBuilder()
     .setName("panel")
@@ -371,10 +388,7 @@ const commands = [
     .setName("lookup")
     .setDescription("Look up a buyer")
     .addStringOption((o) =>
-      o
-        .setName("query")
-        .setDescription("Discord ID or Roblox username")
-        .setRequired(true)
+      o.setName("query").setDescription("Discord ID or Roblox username").setRequired(true)
     ),
 
   new SlashCommandBuilder()
@@ -402,7 +416,6 @@ const commands = [
     ),
 ].map((command) => command.toJSON());
 
-// ==================== REGISTER COMMANDS ====================
 async function registerCommands() {
   if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
     console.error(
@@ -420,10 +433,8 @@ async function registerCommands() {
   console.log("[COMMANDS] Registered successfully.");
 }
 
-// ==================== INTERACTION HANDLER ====================
 client.on("interactionCreate", async (interaction) => {
   try {
-    // Customer panel buttons
     if (interaction.isButton()) {
       const userId = interaction.user.id;
 
@@ -440,8 +451,17 @@ client.on("interactionCreate", async (interaction) => {
           .setRequired(true)
           .setMaxLength(32);
 
+        const passwordInput = new TextInputBuilder()
+          .setCustomId("account_password")
+          .setLabel("Password")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter a password")
+          .setRequired(true)
+          .setMaxLength(128);
+
         modal.addComponents(
-          new ActionRowBuilder().addComponents(usernameInput)
+          new ActionRowBuilder().addComponents(usernameInput),
+          new ActionRowBuilder().addComponents(passwordInput)
         );
 
         return interaction.showModal(modal);
@@ -480,38 +500,255 @@ client.on("interactionCreate", async (interaction) => {
         });
       }
 
-      if (
-        interaction.customId === "jc_key" ||
-        interaction.customId === "jc_mobilemain"
-      ) {
-        const member = await getGuildMember(interaction.guild, userId);
+      if (interaction.customId === "jc_key") {
+        const modal = new ModalBuilder()
+          .setCustomId("jc_key_modal")
+          .setTitle("♡ Get Your Jayce Key");
 
-        if (!member) {
+        const usernameInput = new TextInputBuilder()
+          .setCustomId("roblox_username")
+          .setLabel("Your Roblox username")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter your Roblox username")
+          .setRequired(true)
+          .setMaxLength(32);
+
+        const passwordInput = new TextInputBuilder()
+          .setCustomId("account_password")
+          .setLabel("Password")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter your account password")
+          .setRequired(true)
+          .setMaxLength(128);
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(usernameInput),
+          new ActionRowBuilder().addComponents(passwordInput)
+        );
+
+        return interaction.showModal(modal);
+      }
+
+      if (interaction.customId === "jc_mobilemain") {
+        const modal = new ModalBuilder()
+          .setCustomId("jc_mobilemain_modal")
+          .setTitle("📱 Mobile Main — Verify");
+
+        const usernameInput = new TextInputBuilder()
+          .setCustomId("roblox_username")
+          .setLabel("Your Roblox username")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter your Roblox username")
+          .setRequired(true)
+          .setMaxLength(32);
+
+        const passwordInput = new TextInputBuilder()
+          .setCustomId("account_password")
+          .setLabel("Password")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter your account password")
+          .setRequired(true)
+          .setMaxLength(128);
+
+        const keyInput = new TextInputBuilder()
+          .setCustomId("access_key")
+          .setLabel("Access key")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter the JAYCE-... key")
+          .setRequired(true)
+          .setMaxLength(64);
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(usernameInput),
+          new ActionRowBuilder().addComponents(passwordInput),
+          new ActionRowBuilder().addComponents(keyInput)
+        );
+
+        return interaction.showModal(modal);
+      }
+
+      if (interaction.customId === "jc_resethwid") {
+        const modal = new ModalBuilder()
+          .setCustomId("jc_resethwid_modal")
+          .setTitle("🔁 Reset Local HWID");
+
+        const usernameInput = new TextInputBuilder()
+          .setCustomId("roblox_username")
+          .setLabel("Your Roblox username")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter your Roblox username")
+          .setRequired(true)
+          .setMaxLength(32);
+
+        const passwordInput = new TextInputBuilder()
+          .setCustomId("account_password")
+          .setLabel("Password")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter your account password")
+          .setRequired(true)
+          .setMaxLength(128);
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(usernameInput),
+          new ActionRowBuilder().addComponents(passwordInput)
+        );
+
+        return interaction.showModal(modal);
+      }
+
+      return;
+    }
+
+    if (interaction.isModalSubmit()) {
+      if (interaction.customId === "jc_register_modal") {
+        const username = interaction.fields
+          .getTextInputValue("roblox_username")
+          .trim();
+        const password = interaction.fields.getTextInputValue("account_password");
+
+        if (!username || !password) {
           return replyWithHeart(interaction, {
-            content: "I couldn't find you in this server.",
+            content: "Please enter a valid username and password.",
             ephemeral: true,
           });
         }
 
-        const mobile = interaction.customId === "jc_mobilemain";
-        const requiredRole = mobile ? MOBILE_MAIN_ROLE_ID : MAIN_ROLE_ID;
+        db.accounts[interaction.user.id] = {
+          username,
+          password: hashPassword(password),
+          registeredAt: new Date().toISOString(),
+          discordTag: interaction.user.tag,
+        };
 
-        if (!member.roles.cache.has(requiredRole)) {
+        saveDatabase();
+
+        return replyWithHeart(interaction, {
+          embeds: [
+            makeEmbed(
+              "♡ Registration Complete",
+              `**Roblox username:** ${username}\n**Discord:** ${interaction.user.tag}`
+            ),
+          ],
+          ephemeral: true,
+        });
+      }
+
+      if (interaction.customId === "jc_key_modal") {
+        const username = interaction.fields
+          .getTextInputValue("roblox_username")
+          .trim();
+        const password = interaction.fields.getTextInputValue("account_password");
+
+        if (!username || !password) {
           return replyWithHeart(interaction, {
-            content: mobile
-              ? "You don't have the Mobile Main role."
-              : "You don't have the Jayce Main role.",
+            content: "Please enter a valid username and password.",
             ephemeral: true,
           });
         }
+
+        const account = db.accounts[interaction.user.id];
+
+        if (!account || account.username !== username) {
+          return replyWithHeart(interaction, {
+            content: "No registered account found for that username. Register first.",
+            ephemeral: true,
+          });
+        }
+
+        if (!verifyPassword(account.password, password)) {
+          return replyWithHeart(interaction, {
+            content: "Invalid password.",
+            ephemeral: true,
+          });
+        }
+
+        const code = makeKey();
+
+        db.keys[code] = {
+          userId: interaction.user.id,
+          createdAt: new Date().toISOString(),
+          redeemed: false,
+        };
+
+        saveDatabase();
 
         try {
-          await sendScriptDM(interaction.user, mobile ? "mobile" : "main");
+          await interaction.user.send({
+            embeds: [
+              makeEmbed(
+                "♡ Your Jayce Access Code",
+                `Your access code is:\n\n\`${code}\`\n\nKeep it private.`
+              ),
+            ],
+          });
 
           return replyWithHeart(interaction, {
-            content: mobile
-              ? "📱 Mobile Main was sent to your DMs."
-              : "💗 Jayce Main was sent to your DMs.",
+            content: "Access code generated and sent to your DMs.",
+            ephemeral: true,
+          });
+        } catch {
+          return replyWithHeart(interaction, {
+            content: `I couldn't DM you. Your code is:\n\`${code}\``,
+            ephemeral: true,
+          });
+        }
+      }
+
+      if (interaction.customId === "jc_mobilemain_modal") {
+        const username = interaction.fields
+          .getTextInputValue("roblox_username")
+          .trim();
+        const password = interaction.fields.getTextInputValue("account_password");
+        const accessKey = interaction.fields.getTextInputValue("access_key").trim();
+
+        if (!username || !password || !accessKey) {
+          return replyWithHeart(interaction, {
+            content: "Please enter username, password, and access key.",
+            ephemeral: true,
+          });
+        }
+
+        const account = db.accounts[interaction.user.id];
+
+        if (!account || account.username !== username) {
+          return replyWithHeart(interaction, {
+            content: "No registered account found for that username. Register first.",
+            ephemeral: true,
+          });
+        }
+
+        if (!verifyPassword(account.password, password)) {
+          return replyWithHeart(interaction, {
+            content: "Invalid password.",
+            ephemeral: true,
+          });
+        }
+
+        const keyEntry = db.keys[accessKey];
+
+        if (!keyEntry || keyEntry.userId !== interaction.user.id) {
+          return replyWithHeart(interaction, {
+            content: "That access key is invalid or doesn't belong to you.",
+            ephemeral: true,
+          });
+        }
+
+        if (keyEntry.redeemed) {
+          return replyWithHeart(interaction, {
+            content: "That access key has already been redeemed.",
+            ephemeral: true,
+          });
+        }
+
+        keyEntry.redeemed = true;
+        keyEntry.redeemedAt = new Date().toISOString();
+        saveDatabase();
+
+        try {
+          await sendScriptDM(interaction.user, "mobile");
+
+          return replyWithHeart(interaction, {
+            content: "📱 Mobile Main was sent to your DMs.",
             ephemeral: true,
           });
         } catch {
@@ -522,42 +759,70 @@ client.on("interactionCreate", async (interaction) => {
         }
       }
 
-      return;
-    }
+      if (interaction.customId === "jc_resethwid_modal") {
+        const username = interaction.fields
+          .getTextInputValue("roblox_username")
+          .trim();
+        const password = interaction.fields.getTextInputValue("account_password");
 
-    // Registration modal
-    if (
-      interaction.isModalSubmit() &&
-      interaction.customId === "jc_register_modal"
-    ) {
-      const username = interaction.fields
-        .getTextInputValue("roblox_username")
-        .trim();
+        if (!username || !password) {
+          return replyWithHeart(interaction, {
+            content: "Please enter a valid username and password.",
+            ephemeral: true,
+          });
+        }
 
-      if (!username) {
+        const account = db.accounts[interaction.user.id];
+
+        if (!account || account.username !== username) {
+          return replyWithHeart(interaction, {
+            content: "No registered account found for that username. Register first.",
+            ephemeral: true,
+          });
+        }
+
+        if (!verifyPassword(account.password, password)) {
+          return replyWithHeart(interaction, {
+            content: "Invalid password.",
+            ephemeral: true,
+          });
+        }
+
+        let cleared = false;
+
+        if (Object.prototype.hasOwnProperty.call(db.hwids, interaction.user.id)) {
+          delete db.hwids[interaction.user.id];
+          cleared = true;
+        }
+
+        if (
+          db.accounts[interaction.user.id] &&
+          Object.prototype.hasOwnProperty.call(db.accounts[interaction.user.id], "hwid")
+        ) {
+          delete db.accounts[interaction.user.id].hwid;
+          cleared = true;
+        }
+
+        for (const entry of Object.values(db.keys)) {
+          if (
+            entry &&
+            entry.userId === interaction.user.id &&
+            Object.prototype.hasOwnProperty.call(entry, "hwid")
+          ) {
+            delete entry.hwid;
+            cleared = true;
+          }
+        }
+
+        saveDatabase();
+
         return replyWithHeart(interaction, {
-          content: "Please enter a valid username.",
+          content: cleared
+            ? "♡ Cleared locally saved HWID data for you."
+            : "No locally saved HWID was found for you. An HWID stored in FlowAuth must be reset there separately.",
           ephemeral: true,
         });
       }
-
-      db.accounts[interaction.user.id] = {
-        username,
-        registeredAt: new Date().toISOString(),
-        discordTag: interaction.user.tag,
-      };
-
-      saveDatabase();
-
-      return replyWithHeart(interaction, {
-        embeds: [
-          makeEmbed(
-            "♡ Registration Complete",
-            `**Roblox username:** ${username}\n**Discord:** ${interaction.user.tag}`
-          ),
-        ],
-        ephemeral: true,
-      });
     }
 
     if (!interaction.isChatInputCommand()) return;
@@ -571,7 +836,6 @@ client.on("interactionCreate", async (interaction) => {
 
     const commandName = interaction.commandName;
 
-    // Send customer panel
     if (commandName === "panel") {
       const embed = makeEmbed(
         "🎃 JAYCE MAIN 🦇",
@@ -579,8 +843,9 @@ client.on("interactionCreate", async (interaction) => {
           "**Welcome to Jayce Main!**",
           "",
           "🎀 **Register** — link your Roblox username",
-          "🕸️ **Get Script** — receive your Main script",
-          "📱 **Mobile Main** — receive the mobile loader",
+          "🔑 **Get Key** — receive your JAYCE access key",
+          "📱 **Mobile Main** — receive the mobile loader (requires key)",
+          "🔁 **Reset HWID** — clear your locally saved HWID",
           "🔮 **Get Stats** — view public statistics",
           "",
           "*Choose an option below, boo! ♡*",
@@ -595,14 +860,19 @@ client.on("interactionCreate", async (interaction) => {
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
           .setCustomId("jc_key")
-          .setLabel("Get Script")
-          .setEmoji("🕸️")
+          .setLabel("Get Key")
+          .setEmoji("🔑")
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId("jc_mobilemain")
           .setLabel("Mobile Main")
           .setEmoji("📱")
           .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId("jc_resethwid")
+          .setLabel("Reset HWID")
+          .setEmoji("🔁")
+          .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
           .setCustomId("jc_stats")
           .setLabel("Get Stats")
@@ -616,7 +886,6 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // Admin panel
     if (commandName === "adminpanel") {
       const embed = makeEmbed(
         "♡ Jayce Main Admin Panel",
@@ -650,11 +919,9 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // Announcements
     if (commandName === "announce") {
       const message = interaction.options.getString("message", true);
-      const channel =
-        interaction.options.getChannel("channel") || interaction.channel;
+      const channel = interaction.options.getChannel("channel") || interaction.channel;
 
       if (!channel?.isTextBased() || !channel.send) {
         return replyWithHeart(interaction, {
@@ -673,13 +940,12 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // Generate access key
     if (commandName === "generate-key") {
       const user = interaction.options.getUser("user", true);
       let code;
 
       do {
-        code = makeCode();
+        code = makeKey();
       } while (db.keys[code]);
 
       db.keys[code] = {
@@ -712,7 +978,6 @@ client.on("interactionCreate", async (interaction) => {
       }
     }
 
-    // Send script to buyer
     if (commandName === "jaycescripts") {
       const user = interaction.options.getUser("user", true);
       const scriptType = interaction.options.getString("script", true);
@@ -767,7 +1032,6 @@ client.on("interactionCreate", async (interaction) => {
       }
     }
 
-    // Account details
     if (commandName === "account") {
       const user = interaction.options.getUser("user", true);
       const account = db.accounts[user.id];
@@ -775,10 +1039,7 @@ client.on("interactionCreate", async (interaction) => {
 
       const codes = Object.entries(db.keys)
         .filter(([, data]) => data.userId === user.id)
-        .map(
-          ([code, data]) =>
-            `${code} — ${data.redeemed ? "Redeemed" : "Not redeemed"}`
-        );
+        .map(([code, data]) => `${code} — ${data.redeemed ? "Redeemed" : "Not redeemed"}`);
 
       return replyWithHeart(interaction, {
         embeds: [
@@ -803,7 +1064,6 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // Disable access
     if (commandName === "disableaccess") {
       const user = interaction.options.getUser("user", true);
       const member = await getGuildMember(interaction.guild, user.id);
@@ -830,7 +1090,6 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // Grant access
     if (commandName === "grantaccess") {
       const user = interaction.options.getUser("user", true);
       const scriptType = interaction.options.getString("script", true);
@@ -881,7 +1140,6 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // Blacklist
     if (commandName === "blacklist") {
       const user = interaction.options.getUser("user", true);
       const reason =
@@ -912,7 +1170,6 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // Unblacklist
     if (commandName === "unblacklist") {
       const user = interaction.options.getUser("user", true);
 
@@ -932,7 +1189,6 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // Ban
     if (commandName === "ban") {
       const user = interaction.options.getUser("user", true);
       const reason =
@@ -962,7 +1218,6 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // Lookup buyer
     if (commandName === "lookup") {
       const query = interaction.options.getString("query", true).trim();
       const queryLower = query.toLowerCase();
@@ -1029,7 +1284,6 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // Revoke access
     if (commandName === "revoke") {
       const user = interaction.options.getUser("user", true);
       const member = await getGuildMember(interaction.guild, user.id);
@@ -1053,8 +1307,7 @@ client.on("interactionCreate", async (interaction) => {
           await setScriptRoles(member, false);
         } catch (error) {
           console.error("[REVOKE] Role removal failed:", error);
-          roleWarning =
-            "\n⚠️ I couldn't remove all roles. Check the bot's role hierarchy.";
+          roleWarning = "\n⚠️ I couldn't remove all roles. Check the bot's role hierarchy.";
         }
       }
 
@@ -1064,7 +1317,6 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // DM buyer update
     if (commandName === "dmbuyerupdate") {
       const user = interaction.options.getUser("user", true);
       const message = interaction.options.getString("message", true).trim();
@@ -1093,7 +1345,6 @@ client.on("interactionCreate", async (interaction) => {
       }
     }
 
-    // Clear locally stored HWID
     if (commandName === "forceresethwid") {
       const user = interaction.options.getUser("user", true);
       let cleared = false;
@@ -1132,7 +1383,6 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    // List accounts
     if (commandName === "listallaccounts") {
       const entries = Object.entries(db.accounts);
 
@@ -1184,7 +1434,6 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
-// ==================== BOT READY ====================
 client.once("ready", async () => {
   console.log(`[BOT] Logged in as ${client.user.tag}`);
 
@@ -1195,7 +1444,6 @@ client.once("ready", async () => {
   }
 });
 
-// ==================== LOGIN ====================
 if (!TOKEN) {
   console.error("[CONFIG] DISCORD_TOKEN is missing in Render environment variables.");
 } else {
