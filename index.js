@@ -439,7 +439,7 @@ console.log('[COMMANDS] Registered successfully.');
 }
 
 client.once('ready', async () => {
-console.log([BOT] Logged in as ${client.user.tag});
+console.log(`[BOT] Logged in as ${client.user.tag}`);
 
 try {
 await registerCommands();
