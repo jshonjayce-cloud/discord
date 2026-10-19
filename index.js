@@ -25,18 +25,14 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
-const STAFF_ROLE_ID = "1552637829815865414";
-const MAIN_ROLE_ID = "1552637429456961657";
-const MOBILE_MAIN_ROLE_ID =
-  process.env.MOBILE_MAIN_ROLE_ID || "1554321313332469800";
-
-const LOADER_URL =
-  "https://flowauth.net/v1/loaders/a98aeecca217266364e1eb0396c7a283.lua";
+const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || "1552637829815865414";
+const TICKET_CHANNEL_ID = process.env.TICKET_CHANNEL_ID || "YOUR_TICKET_CHANNEL_ID";
+const PANEL_COLOR = 0xff7518;
+const TICKET_COLOR = 0x5865f2;
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DB_FILE = path.join(DATA_DIR, "database.json");
-const PANEL_COLOR = 0xff7518;
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMITS = new Map();
@@ -50,6 +46,49 @@ const client = new Client({
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(cors());
+
+let db = {
+  keys: {},
+  blacklisted: {},
+  hwids: {},
+  accounts: {},
+  access: {},
+  logs: [],
+};
+
+function saveDatabase() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tempFile = `${DB_FILE}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(db, null, 2));
+    fs.renameSync(tempFile, DB_FILE);
+  } catch (error) {
+    console.error("[DATABASE] Save error:", error);
+  }
+}
+
+function loadDatabase() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+
+    if (fs.existsSync(DB_FILE)) {
+      const loaded = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+      db = {
+        keys: loaded.keys || {},
+        blacklisted: loaded.blacklisted || {},
+        hwids: loaded.hwids || {},
+        accounts: loaded.accounts || {},
+        access: loaded.access || {},
+        logs: Array.isArray(loaded.logs) ? loaded.logs : [],
+      };
+    }
+
+    saveDatabase();
+    console.log("[DATABASE] Loaded successfully.");
+  } catch (error) {
+    console.error("[DATABASE] Load error:", error);
+  }
+}
 
 function appendLog(action, details = {}) {
   db.logs.push({
@@ -79,328 +118,6 @@ function isRateLimited(userId, action, limitMs = RATE_LIMIT_WINDOW_MS, maxCalls 
   current.push(now);
   RATE_LIMITS.set(key, current);
   return false;
-}
-
-function isValidUsername(username) {
-  return typeof username === "string" && /^[A-Za-z0-9_]{3,20}$/.test(username.trim());
-}
-
-function isValidPassword(password) {
-  return typeof password === "string" && password.trim().length >= 6;
-}
-
-app.get("/", (_req, res) => {
-  res.status(200).send("🎃 Jayce Main is running! 🦇");
-});
-
-app.get("/health", (_req, res) => {
-  res.status(200).json({
-    status: "online",
-    bot: "Jayce Main",
-    discord: client.isReady(),
-  });
-});
-
-app.get("/logs", (_req, res) => {
-  res.status(200).json({
-    ok: true,
-    logs: db.logs.slice(-50),
-  });
-});
-
-app.get("/keys/:key", (req, res) => {
-  const key = req.params.key;
-  const entry = db.keys[key];
-
-  if (!entry) {
-    return res.status(404).json({ ok: false, error: "Key not found." });
-  }
-
-  return res.status(200).json({
-    ok: true,
-    key,
-    userId: entry.userId,
-    redeemed: Boolean(entry.redeemed),
-    revoked: Boolean(entry.revoked),
-    hwid: entry.hwid || null,
-    createdAt: entry.createdAt || null,
-    redeemedAt: entry.redeemedAt || null,
-  });
-});
-
-app.post("/keys/:key/reset-hwid", (req, res) => {
-  const key = req.params.key;
-  const { userId, staffId } = req.body || {};
-  const entry = db.keys[key];
-
-  if (!entry) {
-    return res.status(404).json({ ok: false, error: "Key not found." });
-  }
-
-  if (userId && entry.userId !== String(userId)) {
-    return res.status(403).json({
-      ok: false,
-      error: "Key does not belong to the submitted userId.",
-    });
-  }
-
-  delete entry.hwid;
-  entry.redeemed = false;
-  entry.revoked = false;
-
-  appendLog("hwid_reset", {
-    key,
-    userId: entry.userId,
-    staffId: staffId || null,
-  });
-
-  saveDatabase();
-  return res.status(200).json({ ok: true, message: "HWID reset for key." });
-});
-
-app.post("/redeem", (req, res) => {
-  const { key, userId, hwid } = req.body || {};
-
-  if (!key || !userId || !hwid) {
-    return res.status(400).json({
-      ok: false,
-      error: "Missing key, userId, or hwid.",
-    });
-  }
-
-  const entry = db.keys[key];
-  if (!entry) {
-    return res.status(404).json({ ok: false, error: "Invalid key." });
-  }
-
-  if (String(entry.userId) !== String(userId)) {
-    return res.status(403).json({
-      ok: false,
-      error: "This key does not belong to this user.",
-    });
-  }
-
-  if (entry.revoked) {
-    return res.status(403).json({ ok: false, error: "This key has been revoked." });
-  }
-
-  if (entry.redeemed && entry.hwid && entry.hwid !== hwid) {
-    appendLog("hwid_mismatch", {
-      key,
-      userId,
-      submittedHwid: String(hwid),
-      storedHwid: String(entry.hwid),
-    });
-
-    return res.status(403).json({
-      ok: false,
-      error: "HWID mismatch. Contact staff for a reset.",
-    });
-  }
-
-  if (!entry.hwid) {
-    entry.hwid = String(hwid);
-  }
-
-  entry.redeemed = true;
-  entry.redeemedAt = new Date().toISOString();
-  db.access[userId] = true;
-
-  appendLog("key_redeem", {
-    key,
-    userId,
-    hwid: String(hwid),
-  });
-
-  saveDatabase();
-
-  return res.status(200).json({
-    ok: true,
-    message: "Key redeemed successfully.",
-    hwidBound: true,
-  });
-});
-
-// Client-facing redeem endpoint: accepts { username, key, hwid }
-app.post("/client/redeem", (req, res) => {
-  const { username, key, hwid } = req.body || {};
-
-  if (!username || !key || !hwid) {
-    return res.status(400).json({ ok: false, error: "Missing username, key, or hwid." });
-  }
-
-  // Find account by Roblox username (case-insensitive)
-  const accountEntry = Object.entries(db.accounts).find(
-    ([userId, account]) =>
-      account &&
-      typeof account.username === "string" &&
-      account.username.toLowerCase() === String(username).toLowerCase()
-  );
-
-  if (!accountEntry) {
-    return res.status(404).json({ ok: false, error: "No account found for that Roblox username." });
-  }
-
-  const [userId, account] = accountEntry;
-
-  const keyEntry = db.keys[key];
-
-  if (!keyEntry) {
-    return res.status(404).json({ ok: false, error: "Invalid key." });
-  }
-
-  // Ensure the key belongs to the same Discord user that owns the Roblox account
-  if (String(keyEntry.userId) !== String(userId)) {
-    return res.status(403).json({ ok: false, error: "This key does not belong to that Roblox account." });
-  }
-
-  if (keyEntry.revoked) {
-    return res.status(403).json({ ok: false, error: "This key has been revoked." });
-  }
-
-  // HWID mismatch handling (same semantics as /redeem)
-  if (keyEntry.redeemed && keyEntry.hwid && String(keyEntry.hwid) !== String(hwid)) {
-    appendLog("hwid_mismatch_client", {
-      key,
-      userId,
-      submittedHwid: String(hwid),
-      storedHwid: String(keyEntry.hwid),
-    });
-
-    return res.status(403).json({ ok: false, error: "HWID mismatch. Contact staff for a reset." });
-  }
-
-  // Bind the HWID if not already set
-  if (!keyEntry.hwid) {
-    keyEntry.hwid = String(hwid);
-  }
-
-  keyEntry.redeemed = true;
-  keyEntry.redeemedAt = new Date().toISOString();
-  db.access[userId] = true;
-
-  appendLog("client_key_redeem", {
-    key,
-    userId,
-    hwid: String(hwid),
-  });
-
-  saveDatabase();
-
-  // Return the loader URL (client decides how to use it)
-  return res.status(200).json({
-    ok: true,
-    message: "Key redeemed successfully.",
-    loaderUrl: LOADER_URL,
-  });
-});
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`[WEB] Listening on port ${PORT}`);
-});
-
-// ==================== KEEP-ALIVE PINGS ====================
-const KEEP_ALIVE_URL = process.env.KEEP_ALIVE_URL || process.env.RENDER_EXTERNAL_URL;
-
-if (KEEP_ALIVE_URL) {
-  const { URL } = require("url");
-  const http = require("http");
-  const https = require("https");
-
-  function pingKeepAlive() {
-    try {
-      const urlObj = new URL(KEEP_ALIVE_URL);
-      const lib = urlObj.protocol === "http:" ? http : https;
-
-      const req = lib.get(KEEP_ALIVE_URL, (res) => {
-        res.on("data", () => {});
-        res.on("end", () => {});
-      });
-
-      req.on("error", (err) => {
-        console.error("[KEEPALIVE] Ping error:", err.message);
-      });
-
-      req.setTimeout(10_000, () => {
-        req.abort();
-      });
-    } catch (err) {
-      console.error("[KEEPALIVE] Invalid KEEP_ALIVE_URL:", err.message);
-    }
-  }
-
-  const INTERVAL_MS = 4 * 60 * 1000;
-  setInterval(pingKeepAlive, INTERVAL_MS);
-  setTimeout(pingKeepAlive, 5_000);
-
-  console.log(`[KEEPALIVE] Keep-alive pings enabled for ${KEEP_ALIVE_URL}`);
-} else {
-  console.log("[KEEPALIVE] KEEP_ALIVE_URL not set — no keep-alive pings will run.");
-}
-
-// ==================== DATABASE ====================
-let db = {
-  keys: {},
-  blacklisted: {},
-  hwids: {},
-  accounts: {},
-  access: {},
-  logs: [],
-};
-
-function saveDatabase() {
-  try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-
-    const tempFile = `${DB_FILE}.tmp`;
-    fs.writeFileSync(tempFile, JSON.stringify(db, null, 2));
-    fs.renameSync(tempFile, DB_FILE);
-  } catch (error) {
-    console.error("[DATABASE] Save error:", error);
-  }
-}
-
-function loadDatabase() {
-  try {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-
-    if (fs.existsSync(DB_FILE)) {
-      const loaded = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-
-      db = {
-        keys: loaded.keys || {},
-        blacklisted: loaded.blacklisted || {},
-        hwids: loaded.hwids || {},
-        accounts: loaded.accounts || {},
-        access: loaded.access || {},
-        logs: loaded.logs || [],
-      };
-    }
-
-    if (!Array.isArray(db.logs)) {
-      db.logs = [];
-    }
-
-    saveDatabase();
-    console.log("[DATABASE] Loaded successfully.");
-  } catch (error) {
-    console.error("[DATABASE] Load error:", error);
-  }
-}
-
-loadDatabase();
-
-// ==================== HELPERS ====================
-function isStaff(member) {
-  return Boolean(member?.roles?.cache?.has(STAFF_ROLE_ID));
-}
-
-function isBlacklisted(userId) {
-  return Boolean(db.blacklisted[userId]);
-}
-
-function accessEnabled(userId) {
-  return db.access[userId] !== false;
 }
 
 function makeEmbed(title, description) {
@@ -471,58 +188,130 @@ function verifyPassword(stored, password) {
   }
 }
 
-async function getGuildMember(guild, userId) {
-  if (!guild) return null;
+function createBasicTicketPanel() {
+  return {
+    embeds: [
+      new EmbedBuilder()
+        .setColor(PANEL_COLOR)
+        .setTitle("🎫 Jayce Support")
+        .setDescription(
+          "Select a category below to open a ticket.\n\n" +
+            "Your request will be sent to the support ticket channel."
+        )
+        .addFields({
+          name: "Options",
+          value: "Support • Purchase • Script • Help • Bugs",
+        })
+        .setTimestamp(),
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("ticket_support")
+          .setLabel("Support")
+          .setStyle(ButtonStyle.Primary),
+
+        new ButtonBuilder()
+          .setCustomId("ticket_purchase")
+          .setLabel("Purchase")
+          .setStyle(ButtonStyle.Success),
+
+        new ButtonBuilder()
+          .setCustomId("ticket_script")
+          .setLabel("Script")
+          .setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("ticket_help")
+          .setLabel("Help")
+          .setStyle(ButtonStyle.Secondary),
+
+        new ButtonBuilder()
+          .setCustomId("ticket_bugs")
+          .setLabel("Bugs")
+          .setStyle(ButtonStyle.Danger)
+      ),
+    ],
+  };
+}
+
+async function openTicket(interaction, ticketType) {
+  const guild = interaction.guild;
+  if (!guild) {
+    return interaction.reply({
+      content: "This ticket system only works in a server.",
+      ephemeral: true,
+    });
+  }
+
+  const ticketChannel =
+    guild.channels.cache.get(TICKET_CHANNEL_ID) ||
+    (await guild.channels.fetch(TICKET_CHANNEL_ID).catch(() => null));
+
+  if (!ticketChannel) {
+    return interaction.reply({
+      content:
+        "Ticket channel is not set or not found. Please configure `TICKET_CHANNEL_ID`.",
+      ephemeral: true,
+    });
+  }
+
+  const labelMap = {
+    support: "Support",
+    purchase: "Purchase",
+    script: "Script",
+    help: "Help",
+    bugs: "Bugs",
+  };
+
+  const ticketLabel = labelMap[ticketType] || "Support";
+
+  const ticketEmbed = new EmbedBuilder()
+    .setColor(TICKET_COLOR)
+    .setTitle(`🎫 New ${ticketLabel} Ticket`)
+    .setDescription(
+      `**User:** ${interaction.user.tag}\n` +
+        `**Discord ID:** ${interaction.user.id}\n` +
+        `**Type:** ${ticketLabel}\n` +
+        `**Created:** <t:${Math.floor(Date.now() / 1000)}:F>`
+    )
+    .addFields({
+      name: "Next step",
+      value: "A staff member will respond here shortly.",
+    })
+    .setTimestamp();
+
+  const ticketMessage = await ticketChannel.send({
+    content: `<@&${STAFF_ROLE_ID}> New ${ticketLabel.toLowerCase()} ticket`,
+    embeds: [ticketEmbed],
+  });
+
+  await interaction.reply({
+    content: `✅ Your ${ticketLabel.toLowerCase()} ticket was created in <#${TICKET_CHANNEL_ID}>.`,
+    ephemeral: true,
+  });
 
   try {
-    return await guild.members.fetch(userId);
-  } catch {
-    return null;
-  }
+    await interaction.user
+      .send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(TICKET_COLOR)
+            .setTitle("🎫 Ticket Created")
+            .setDescription(
+              `Your ${ticketLabel.toLowerCase()} ticket was submitted successfully.\n\n` +
+                `Ticket channel: <#${TICKET_CHANNEL_ID}>\n` +
+                `Reference: ${ticketMessage.id}`
+            )
+            .setTimestamp(),
+        ],
+      })
+      .catch(() => {});
+  } catch (err) {}
 }
 
-async function setScriptRoles(member, enabled, scriptType = "both") {
-  const roleIds = [];
-
-  if (scriptType === "main" || scriptType === "both") {
-    roleIds.push(MAIN_ROLE_ID);
-  }
-
-  if (scriptType === "mobile" || scriptType === "both") {
-    roleIds.push(MOBILE_MAIN_ROLE_ID);
-  }
-
-  for (const roleId of [...new Set(roleIds)]) {
-    const role =
-      member.guild.roles.cache.get(roleId) ||
-      (await member.guild.roles.fetch(roleId).catch(() => null));
-
-    if (!role) {
-      throw new Error(`Role not found: ${roleId}`);
-    }
-
-    if (enabled) {
-      await member.roles.add(roleId);
-    } else {
-      await member.roles.remove(roleId);
-    }
-  }
-}
-
-async function sendScriptDM(user, scriptType) {
-  const script = `loadstring(game:HttpGet("${LOADER_URL}"))()`;
-
-  const embed = makeEmbed(
-    scriptType === "mobile" ? "📱 Jayce Mobile Main" : "🕸️ Jayce Main Script",
-    "Here is your script. Keep it private. ♡"
-  );
-
-  await user.send({
-    embeds: [embed],
-    content: `\`\`\`lua\n${script}\n\`\`\``,
-  });
-}
-
+// ==================== COMMANDS ====================
 const commands = [
   new SlashCommandBuilder()
     .setName("panel")
@@ -540,142 +329,6 @@ const commands = [
     )
     .addChannelOption((o) =>
       o.setName("channel").setDescription("Channel to announce in")
-    ),
-
-  new SlashCommandBuilder()
-    .setName("generate-key")
-    .setDescription("Generate a Jayce access code")
-    .addUserOption((o) =>
-      o.setName("user").setDescription("User receiving the code").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("resetpassword")
-    .setDescription("Reset a buyer's account password")
-    .addUserOption((o) =>
-      o.setName("user").setDescription("Account owner").setRequired(true)
-    )
-    .addStringOption((o) =>
-      o
-        .setName("password")
-        .setDescription("New password")
-        .setRequired(true)
-        .setMinLength(6)
-        .setMaxLength(128)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("exportlogs")
-    .setDescription("Show recent Jayce activity logs"),
-
-  new SlashCommandBuilder()
-    .setName("jaycescripts")
-    .setDescription("Send a buyer their Jayce script")
-    .addUserOption((o) =>
-      o.setName("user").setDescription("Buyer receiving the script").setRequired(true)
-    )
-    .addStringOption((o) =>
-      o
-        .setName("script")
-        .setDescription("Choose which script")
-        .setRequired(true)
-        .addChoices(
-          { name: "Main", value: "main" },
-          { name: "Mobile Main", value: "mobile" }
-        )
-    ),
-
-  new SlashCommandBuilder()
-    .setName("account")
-    .setDescription("View a user's Jayce account")
-    .addUserOption((o) =>
-      o.setName("user").setDescription("Account to inspect").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("disableaccess")
-    .setDescription("Disable a user's Jayce access")
-    .addUserOption((o) =>
-      o.setName("user").setDescription("User to disable").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("grantaccess")
-    .setDescription("Grant access to a Jayce script")
-    .addUserOption((o) =>
-      o.setName("user").setDescription("User to grant access").setRequired(true)
-    )
-    .addStringOption((o) =>
-      o
-        .setName("script")
-        .setDescription("Which script?")
-        .setRequired(true)
-        .addChoices(
-          { name: "Main", value: "main" },
-          { name: "Mobile Main", value: "mobile" }
-        )
-    ),
-
-  new SlashCommandBuilder()
-    .setName("blacklist")
-    .setDescription("Blacklist a user")
-    .addUserOption((o) =>
-      o.setName("user").setDescription("User to blacklist").setRequired(true)
-    )
-    .addStringOption((o) =>
-      o.setName("reason").setDescription("Reason for blacklist")
-    ),
-
-  new SlashCommandBuilder()
-    .setName("unblacklist")
-    .setDescription("Remove a user's blacklist")
-    .addUserOption((o) =>
-      o.setName("user").setDescription("User to unblacklist").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("ban")
-    .setDescription("Ban a member from this server")
-    .addUserOption((o) =>
-      o.setName("user").setDescription("Member to ban").setRequired(true)
-    )
-    .addStringOption((o) =>
-      o.setName("reason").setDescription("Reason for ban")
-    ),
-
-  new SlashCommandBuilder()
-    .setName("listallaccounts")
-    .setDescription("List registered Jayce accounts"),
-
-  new SlashCommandBuilder()
-    .setName("lookup")
-    .setDescription("Look up a buyer")
-    .addStringOption((o) =>
-      o.setName("query").setDescription("Discord ID or Roblox username").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("revoke")
-    .setDescription("Revoke a buyer's Jayce access")
-    .addUserOption((o) =>
-      o.setName("user").setDescription("Buyer to revoke").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("dmbuyerupdate")
-    .setDescription("DM an update to a buyer")
-    .addUserOption((o) =>
-      o.setName("user").setDescription("Buyer to message").setRequired(true)
-    )
-    .addStringOption((o) =>
-      o.setName("message").setDescription("Update message").setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName("forceresethwid")
-    .setDescription("Clear a buyer's locally saved HWID")
-    .addUserOption((o) =>
-      o.setName("user").setDescription("Buyer whose HWID should be cleared").setRequired(true)
     ),
 ].map((command) => command.toJSON());
 
@@ -696,13 +349,244 @@ async function registerCommands() {
   console.log("[COMMANDS] Registered successfully.");
 }
 
+// ==================== HTTP ENDPOINTS ====================
+app.get("/", (_req, res) => {
+  res.status(200).send("🎃 Jayce Main is running! 🦇");
+});
+
+app.get("/health", (_req, res) => {
+  res.status(200).json({
+    status: "online",
+    bot: "Jayce Main",
+    discord: client.isReady(),
+  });
+});
+
+app.get("/logs", (_req, res) => {
+  res.status(200).json({ ok: true, logs: db.logs.slice(-50) });
+});
+
+app.get("/keys/:key", (req, res) => {
+  const key = req.params.key;
+  const entry = db.keys[key];
+
+  if (!entry) {
+    return res.status(404).json({ ok: false, error: "Key not found." });
+  }
+
+  return res.status(200).json({
+    ok: true,
+    key,
+    userId: entry.userId,
+    redeemed: Boolean(entry.redeemed),
+    revoked: Boolean(entry.revoked),
+    hwid: entry.hwid || null,
+    createdAt: entry.createdAt || null,
+    redeemedAt: entry.redeemedAt || null,
+  });
+});
+
+app.post("/redeem", (req, res) => {
+  const { key, userId, hwid } = req.body || {};
+
+  if (!key || !userId || !hwid) {
+    return res.status(400).json({
+      ok: false,
+      error: "Missing key, userId, or hwid.",
+    });
+  }
+
+  const entry = db.keys[key];
+  if (!entry) {
+    return res.status(404).json({ ok: false, error: "Invalid key." });
+  }
+
+  if (String(entry.userId) !== String(userId)) {
+    return res.status(403).json({
+      ok: false,
+      error: "This key does not belong to this user.",
+    });
+  }
+
+  if (entry.revoked) {
+    return res.status(403).json({ ok: false, error: "This key has been revoked." });
+  }
+
+  if (entry.redeemed && entry.hwid && entry.hwid !== hwid) {
+    appendLog("hwid_mismatch", {
+      key,
+      userId,
+      submittedHwid: String(hwid),
+      storedHwid: String(entry.hwid),
+    });
+
+    return res.status(403).json({
+      ok: false,
+      error: "HWID mismatch. Contact staff for a reset.",
+    });
+  }
+
+  if (!entry.hwid) {
+    entry.hwid = String(hwid);
+  }
+
+  entry.redeemed = true;
+  entry.redeemedAt = new Date().toISOString();
+  db.access[userId] = true;
+
+  appendLog("key_redeem", {
+    key,
+    userId,
+    hwid: String(hwid),
+  });
+
+  saveDatabase();
+
+  return res.status(200).json({
+    ok: true,
+    message: "Key redeemed successfully.",
+    hwidBound: true,
+  });
+});
+
+app.post("/client/redeem", (req, res) => {
+  const { username, key, hwid } = req.body || {};
+
+  if (!username || !key || !hwid) {
+    return res.status(400).json({ ok: false, error: "Missing username, key, or hwid." });
+  }
+
+  const accountEntry = Object.entries(db.accounts).find(
+    ([userId, account]) =>
+      account &&
+      typeof account.username === "string" &&
+      account.username.toLowerCase() === String(username).toLowerCase()
+  );
+
+  if (!accountEntry) {
+    return res.status(404).json({ ok: false, error: "No account found for that Roblox username." });
+  }
+
+  const [userId] = accountEntry;
+  const keyEntry = db.keys[key];
+
+  if (!keyEntry) {
+    return res.status(404).json({ ok: false, error: "Invalid key." });
+  }
+
+  if (String(keyEntry.userId) !== String(userId)) {
+    return res.status(403).json({ ok: false, error: "This key does not belong to that Roblox account." });
+  }
+
+  if (keyEntry.revoked) {
+    return res.status(403).json({ ok: false, error: "This key has been revoked." });
+  }
+
+  if (keyEntry.redeemed && keyEntry.hwid && String(keyEntry.hwid) !== String(hwid)) {
+    appendLog("hwid_mismatch_client", {
+      key,
+      userId,
+      submittedHwid: String(hwid),
+      storedHwid: String(keyEntry.hwid),
+    });
+
+    return res.status(403).json({ ok: false, error: "HWID mismatch. Contact staff for a reset." });
+  }
+
+  if (!keyEntry.hwid) {
+    keyEntry.hwid = String(hwid);
+  }
+
+  keyEntry.redeemed = true;
+  keyEntry.redeemedAt = new Date().toISOString();
+  db.access[userId] = true;
+
+  appendLog("client_key_redeem", {
+    key,
+    userId,
+    hwid: String(hwid),
+  });
+
+  saveDatabase();
+
+  return res.status(200).json({
+    ok: true,
+    message: "Key redeemed successfully.",
+    loaderUrl: "https://flowauth.net/v1/loaders/a98aeecca217266364e1eb0396c7a283.lua",
+  });
+});
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`[WEB] Listening on port ${PORT}`);
+});
+
+loadDatabase();
+
+// ==================== EVENT HANDLERS ====================
+client.on("ready", async () => {
+  console.log(`[BOT] Logged in as ${client.user.tag}`);
+  await registerCommands();
+});
+
 client.on("interactionCreate", async (interaction) => {
   try {
+    if (interaction.isCommand()) {
+      if (interaction.commandName === "panel") {
+        return interaction.reply(createBasicTicketPanel());
+      }
+
+      if (interaction.commandName === "adminpanel") {
+        return interaction.reply({
+          embeds: [
+            makeEmbed(
+              "🛠️ Admin Panel",
+              "Staff tools are available in the admin dashboard.\n\n" +
+                "Ticket queue is managed in the configured ticket channel."
+            ),
+          ],
+          ephemeral: true,
+        });
+      }
+
+      if (interaction.commandName === "announce") {
+        const message = interaction.options.getString("message");
+        const channel = interaction.options.getChannel("channel") || interaction.channel;
+
+        if (!channel || !channel.isTextBased()) {
+          return interaction.reply({
+            content: "Please choose a valid text channel.",
+            ephemeral: true,
+          });
+        }
+
+        await channel.send({ embeds: [makeEmbed("📢 Announcement", message)] });
+        return interaction.reply({
+          content: `✅ Announcement sent to ${channel}.`,
+          ephemeral: true,
+        });
+      }
+
+      return interaction.reply({
+        content: "That command is not available yet.",
+        ephemeral: true,
+      });
+    }
+
     if (interaction.isButton()) {
-      const userId = interaction.user.id;
+      const ticketMap = {
+        ticket_support: "support",
+        ticket_purchase: "purchase",
+        ticket_script: "script",
+        ticket_help: "help",
+        ticket_bugs: "bugs",
+      };
+
+      if (ticketMap[interaction.customId]) {
+        return openTicket(interaction, ticketMap[interaction.customId]);
+      }
 
       if (interaction.customId === "jc_register") {
-        if (isRateLimited(userId, "register")) {
+        if (isRateLimited(interaction.user.id, "register")) {
           return replyWithHeart(interaction, {
             content: "♻️ Please wait a bit before registering again.",
             ephemeral: true,
@@ -746,9 +630,6 @@ client.on("interactionCreate", async (interaction) => {
                 `**Registered accounts:** ${Object.keys(db.accounts).length}`,
                 `**Keys created:** ${Object.keys(db.keys).length}`,
                 `**Blacklisted accounts:** ${Object.keys(db.blacklisted).length}`,
-                `**Disabled access records:** ${
-                  Object.values(db.access).filter((value) => value === false).length
-                }`,
                 `**Audit entries:** ${db.logs.length}`,
               ].join("\n")
             ),
@@ -757,24 +638,95 @@ client.on("interactionCreate", async (interaction) => {
         });
       }
 
-      if (isBlacklisted(userId)) {
-        return replyWithHeart(interaction, {
-          content: "⛔ Your account is blacklisted.",
-          ephemeral: true,
-        });
-      }
-
-      if (!accessEnabled(userId)) {
-        return replyWithHeart(interaction, {
-          content: "🔒 Your Jayce access is disabled. Contact staff.",
-          ephemeral: true,
-        });
-      }
-
       if (interaction.customId === "jc_key") {
-        if (isRateLimited(userId, "key_generate")) {
+        if (isRateLimited(interaction.user.id, "key_generate")) {
           return replyWithHeart(interaction, {
             content: "♻️ Please wait before generating another key.",
             ephemeral: true,
           });
+        }
 
+        const key = makeKey();
+        db.keys[key] = {
+          key,
+          userId: interaction.user.id,
+          createdAt: new Date().toISOString(),
+          redeemed: false,
+          revoked: false,
+        };
+
+        appendLog("key_created", {
+          key,
+          userId: interaction.user.id,
+        });
+        saveDatabase();
+
+        return interaction.reply({
+          embeds: [
+            makeEmbed(
+              "🔑 Your Key",
+              `Your access key is:\n\n\`\`${key}\`\`\n\nKeep it private.`
+            ),
+          ],
+          ephemeral: true,
+        });
+      }
+    }
+
+    if (interaction.isModalSubmit()) {
+      if (interaction.customId === "jc_register_modal") {
+        const username = interaction.fields.getTextInputValue("roblox_username");
+        const password = interaction.fields.getTextInputValue("account_password");
+
+        const safeUsername = username.trim();
+        const safePassword = password.trim();
+
+        if (!safeUsername || !safePassword) {
+          return interaction.reply({
+            content: "Please enter both username and password.",
+            ephemeral: true,
+          });
+        }
+
+        db.accounts[interaction.user.id] = {
+          username: safeUsername,
+          passwordHash: hashPassword(safePassword),
+          createdAt: new Date().toISOString(),
+        };
+
+        appendLog("account_registered", {
+          userId: interaction.user.id,
+          username: safeUsername,
+        });
+        saveDatabase();
+
+        return interaction.reply({
+          embeds: [
+            makeEmbed(
+              "✅ Registered",
+              `Your account has been registered as **${safeUsername}**.`
+            ),
+          ],
+          ephemeral: true,
+        });
+      }
+    }
+  } catch (error) {
+    console.error("[INTERACTION] Error:", error);
+
+    if (interaction && !interaction.deferred && !interaction.replied) {
+      await interaction.reply({
+        content: "Something went wrong while processing that action.",
+        ephemeral: true,
+      }).catch(() => {});
+    }
+  }
+});
+
+if (!TOKEN) {
+  console.warn("[CONFIG] DISCORD_TOKEN is not set. Bot will not login.");
+} else {
+  client.login(TOKEN);
+}
+
+module.exports = { createBasicTicketPanel, openTicket };
