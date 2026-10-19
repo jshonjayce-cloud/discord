@@ -19,6 +19,8 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const cors = require("cors");
+const http = require("http");
+const https = require("https");
 
 // ==================== CONFIG ====================
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -26,11 +28,14 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || "1552637829815865414";
+const BUYER_ROLE_ID = process.env.BUYER_ROLE_ID;
 const MAIN_ROLE_ID = "1552637429456961657";
 const MOBILE_MAIN_ROLE_ID = "1554321313332469800";
 
 const LOADER_URL =
   "https://flowauth.net/v1/loaders/a98aeecca217266364e1eb0396c7a283.lua";
+const KEEPALIVE_URL = process.env.KEEPALIVE_URL;
+const KEEPALIVE_INTERVAL_MS = Number(process.env.KEEPALIVE_INTERVAL_MS || 300000);
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -115,7 +120,7 @@ function loadDatabase() {
       db = {
         keys: loaded.keys || {},
         blacklisted: loaded.blacklisted || {},
-        hwids: loaded.hwids || {},
+        hwids: loaded.hwid || {},
         accounts: loaded.accounts || {},
         access: loaded.access || {},
         logs: Array.isArray(loaded.logs) ? loaded.logs : [],
@@ -144,6 +149,31 @@ app.get("/health", (_req, res) => {
 app.get("/logs", (_req, res) => {
   res.status(200).json({ ok: true, logs: db.logs.slice(-50) });
 });
+
+function keepAlivePing() {
+  if (!KEEPALIVE_URL) return;
+
+  try {
+    const target = new URL(KEEPALIVE_URL);
+    const transport = target.protocol === "https:" ? https : http;
+
+    transport
+      .get(target, (res) => {
+        res.resume();
+        console.log(`[KEEPALIVE] ${res.statusCode} ${target.href}`);
+      })
+      .on("error", (error) => {
+        console.error("[KEEPALIVE] Ping failed:", error.message);
+      });
+  } catch (error) {
+    console.error("[KEEPALIVE] Invalid URL:", error.message);
+  }
+}
+
+if (KEEPALIVE_URL) {
+  keepAlivePing();
+  setInterval(keepAlivePing, KEEPALIVE_INTERVAL_MS);
+}
 
 app.get("/keys/:key", (req, res) => {
   const key = req.params.key;
@@ -401,6 +431,23 @@ function hasRole(member, roleId) {
   return Boolean(member?.roles?.cache?.has(roleId));
 }
 
+function canAccessBuyerPanel(member) {
+  if (!member || !member.guild) {
+    return false;
+  }
+
+  if (member.guild.ownerId === member.id) {
+    return false;
+  }
+
+  if (!BUYER_ROLE_ID) {
+    console.warn("[CONFIG] BUYER_ROLE_ID is not set. Buyer panel access is disabled.");
+    return false;
+  }
+
+  return hasRole(member, BUYER_ROLE_ID);
+}
+
 async function setScriptRoles(member, enabled, scriptType = "both") {
   const roleIds = [];
 
@@ -604,6 +651,13 @@ client.on("interactionCreate", async (interaction) => {
   try {
     if (interaction.isCommand()) {
       if (interaction.commandName === "panel") {
+        if (!canAccessBuyerPanel(interaction.member)) {
+          return interaction.reply({
+            content: "❌ The buyer panel is restricted to the buyer role only.",
+            ephemeral: true,
+          });
+        }
+
         return interaction.reply(createLegacyPanel());
       }
 
@@ -645,6 +699,13 @@ client.on("interactionCreate", async (interaction) => {
 
     if (interaction.isButton()) {
       const member = interaction.member;
+
+      if (!canAccessBuyerPanel(member)) {
+        return replyWithHeart(interaction, {
+          content: "❌ This panel is restricted to the buyer role only.",
+          ephemeral: true,
+        });
+      }
 
       if (interaction.customId === "jc_script") {
         if (isRateLimited(interaction.user.id, "script_send")) {
@@ -791,6 +852,13 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (interaction.isModalSubmit()) {
+      if (!canAccessBuyerPanel(interaction.member)) {
+        return interaction.reply({
+          content: "❌ This panel is restricted to the buyer role only.",
+          ephemeral: true,
+        });
+      }
+
       if (interaction.customId === "jc_register_modal") {
         const username = interaction.fields.getTextInputValue("roblox_username");
         const password = interaction.fields.getTextInputValue("account_password");
@@ -888,3 +956,4 @@ if (!TOKEN) {
 loadDatabase();
 
 module.exports = { createLegacyPanel };
+
