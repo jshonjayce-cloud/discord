@@ -41,10 +41,6 @@ const PANEL_COLOR = 0xff7518;
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMITS = new Map();
 
-// Public base URL used by clients. Prefer explicit env var, fall back to Render URL.
-const PUBLIC_BASE = (process.env.CLIENT_BASE_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "") || null;
-const CLIENT_REDEEM_URL = PUBLIC_BASE ? `${PUBLIC_BASE}/client/redeem` : null;
-
 // ==================== DISCORD CLIENT ====================
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
@@ -513,8 +509,11 @@ async function setScriptRoles(member, enabled, scriptType = "both") {
   }
 }
 
+// Replaced sendScriptDM with a safer implementation that builds the lua payload
 async function sendScriptDM(user, scriptType) {
-  // If CLIENT_REDEEM_URL isn't configured, fall back to the old direct loader URL.
+  // If you have a configurable client redeem endpoint, set it in env as CLIENT_REDEEM_URL or PUBLIC_BASE
+  const CLIENT_REDEEM_URL = process.env.CLIENT_REDEEM_URL;
+  const PUBLIC_BASE = process.env.PUBLIC_BASE;
   const clientRedeem = CLIENT_REDEEM_URL || (PUBLIC_BASE ? `${PUBLIC_BASE}/client/redeem` : null);
   const redeemEndpoint = clientRedeem || "https://your-app.example.com/client/redeem";
 
@@ -525,31 +524,31 @@ async function sendScriptDM(user, scriptType) {
     'local KEY = "JAYCE-REPLACE-KEY"',
     'local HWID = (pcall(function() return game:GetService("RbxAnalyticsService"):GetClientId() end) and game:GetService("RbxAnalyticsService"):GetClientId()) or "unknown-hwid"',
     'local HttpService = game:GetService("HttpService")',
-    'local ok, response = pcall(function()',
-    '  local request = (request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))',
+    "local ok, response = pcall(function()",
+    "  local request = (request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))",
     '  if not request then error("Executor does not support HTTP requests.") end',
-    '  return request({',
-    '    Url = "' + redeemEndpoint + '",',
+    "  return request({",
+    `    Url = "${redeemEndpoint}",`,
     '    Method = "POST",',
     '    Headers = { ["Content-Type"] = "application/json" },',
     '    Body = HttpService:JSONEncode({ username = USERNAME, key = KEY, hwid = HWID })',
-    '  })',
-    'end)',
+    "  })",
+    "end)",
     'if not ok then error("[/jayce] Could not reach server: " .. tostring(response)) end',
-    'local success, data = pcall(function() return HttpService:JSONDecode(response.Body) end)',
+    "local success, data = pcall(function() return HttpService:JSONDecode(response.Body) end)",
     'if not success or not data then error("[/jayce] Invalid JSON from server") end',
     'if not data.ok then error("[/jayce] " .. tostring(data.error or "Redeem failed")) end',
-    'local loaderUrl = data.loaderUrl',
+    "local loaderUrl = data.loaderUrl",
     'if not loaderUrl then error("[/jayce] No loader URL returned from server") end',
-    'local ok2, resp2 = pcall(function()',
-    '  local request = (request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))',
+    "local ok2, resp2 = pcall(function()",
+    "  local request = (request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))",
     '  return request({ Url = loaderUrl, Method = "GET" })',
-    'end)',
+    "end)",
     'if not ok2 then error("[/jayce] Could not fetch loader: " .. tostring(resp2)) end',
-    'local code = resp2.Body',
-    'local func, err = loadstring(code)',
+    "local code = resp2.Body",
+    "local func, err = loadstring(code)",
     'if not func then error("[/jayce] Failed to load loader: " .. tostring(err)) end',
-    'pcall(func)'
+    "pcall(func)"
   ];
 
   const script = luaLines.join("\n");
