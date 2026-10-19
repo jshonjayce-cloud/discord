@@ -28,13 +28,18 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || "1552637829815865414";
+const MAIN_ROLE_ID = "1552637429456961657";
+const MOBILE_MAIN_ROLE_ID = process.env.MOBILE_MAIN_ROLE_ID || "1554321313332469800";
 const TICKET_CHANNEL_ID = process.env.TICKET_CHANNEL_ID || "1556208545278595142";
-const PANEL_COLOR = 0xff7518;
-const TICKET_COLOR = 0x5865f2;
+
+const LOADER_URL =
+  "https://flowauth.net/v1/loaders/a98aeecca217266364e1eb0396c7a283.lua";
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DB_FILE = path.join(DATA_DIR, "database.json");
+const PANEL_COLOR = 0xff7518;
+const TICKET_COLOR = 0x5865f2;
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMITS = new Map();
@@ -320,7 +325,7 @@ app.post("/client/redeem", (req, res) => {
   return res.status(200).json({
     ok: true,
     message: "Key redeemed successfully.",
-    loaderUrl: "https://flowauth.net/v1/loaders/a98aeecca217266364e1eb0396c7a283.lua",
+    loaderUrl: LOADER_URL,
   });
 });
 
@@ -396,7 +401,76 @@ function verifyPassword(stored, password) {
   }
 }
 
-function createBasicTicketPanel() {
+async function setScriptRoles(member, enabled, scriptType = "both") {
+  const roleIds = [];
+
+  if (scriptType === "main" || scriptType === "both") {
+    roleIds.push(MAIN_ROLE_ID);
+  }
+
+  if (scriptType === "mobile" || scriptType === "both") {
+    roleIds.push(MOBILE_MAIN_ROLE_ID);
+  }
+
+  for (const roleId of [...new Set(roleIds)]) {
+    const role =
+      member.guild.roles.cache.get(roleId) ||
+      (await member.guild.roles.fetch(roleId).catch(() => null));
+
+    if (!role) {
+      throw new Error(`Role not found: ${roleId}`);
+    }
+
+    if (enabled) {
+      await member.roles.add(roleId);
+    } else {
+      await member.roles.remove(roleId);
+    }
+  }
+}
+
+async function sendScriptDM(user, scriptType) {
+  const script = `loadstring(game:HttpGet("${LOADER_URL}"))()`;
+
+  const embed = makeEmbed(
+    scriptType === "mobile" ? "📱 Jayce Mobile Main" : "🕸️ Jayce Main Script",
+    "Here is your script. Keep it private. ♡"
+  );
+
+  await user.send({
+    embeds: [embed],
+    content: `\`\`\`lua\n${script}\n\`\`\``,
+  });
+}
+
+function createLegacyPanel() {
+  return {
+    embeds: [
+      makeEmbed(
+        "♡ Jayce Main",
+        [
+          "**Register** your account.",
+          "**Get key** to activate access.",
+          "**Stats** for account/log info.",
+          "**Main script** and **mobile main script** options."
+        ].join("\n")
+      ),
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("jc_register").setLabel("Register").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("jc_key").setLabel("Get Key").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("jc_stats").setLabel("Stats").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("jc_script").setLabel("Main Script").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("jc_mobile_script").setLabel("Mobile Main").setStyle(ButtonStyle.Secondary)
+      ),
+    ],
+  };
+}
+
+function createTicketPanel() {
   return {
     embeds: [
       new EmbedBuilder()
@@ -411,26 +485,11 @@ function createBasicTicketPanel() {
           .setCustomId("ticket_select")
           .setPlaceholder("Choose a reason...")
           .addOptions(
-            new StringSelectMenuOptionBuilder()
-              .setLabel("support")
-              .setValue("support")
-              .setDescription("Open a ticket for support"),
-            new StringSelectMenuOptionBuilder()
-              .setLabel("purchase")
-              .setValue("purchase")
-              .setDescription("Open a ticket for purchase"),
-            new StringSelectMenuOptionBuilder()
-              .setLabel("script")
-              .setValue("script")
-              .setDescription("Open a ticket for script"),
-            new StringSelectMenuOptionBuilder()
-              .setLabel("help")
-              .setValue("help")
-              .setDescription("Open a ticket for help"),
-            new StringSelectMenuOptionBuilder()
-              .setLabel("bugs")
-              .setValue("bugs")
-              .setDescription("Open a ticket for bugs")
+            new StringSelectMenuOptionBuilder().setLabel("support").setValue("support").setDescription("Open a ticket for support"),
+            new StringSelectMenuOptionBuilder().setLabel("purchase").setValue("purchase").setDescription("Open a ticket for purchase"),
+            new StringSelectMenuOptionBuilder().setLabel("script").setValue("script").setDescription("Open a ticket for script"),
+            new StringSelectMenuOptionBuilder().setLabel("help").setValue("help").setDescription("Open a ticket for help"),
+            new StringSelectMenuOptionBuilder().setLabel("bugs").setValue("bugs").setDescription("Open a ticket for bugs")
           )
       ),
     ],
@@ -493,21 +552,19 @@ async function openTicket(interaction, ticketType) {
   });
 
   try {
-    await interaction.user
-      .send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(TICKET_COLOR)
-            .setTitle("🎫 Ticket Created")
-            .setDescription(
-              `Your ${ticketLabel.toLowerCase()} ticket was submitted successfully.\n\n` +
-                `Ticket channel: <#${TICKET_CHANNEL_ID}>\n` +
-                `Reference: ${ticketMessage.id}`
-            )
-            .setTimestamp(),
-        ],
-      })
-      .catch(() => {});
+    await interaction.user.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(TICKET_COLOR)
+          .setTitle("🎫 Ticket Created")
+          .setDescription(
+            `Your ${ticketLabel.toLowerCase()} ticket was submitted successfully.\n\n` +
+              `Ticket channel: <#${TICKET_CHANNEL_ID}>\n` +
+              `Reference: ${ticketMessage.id}`
+          )
+          .setTimestamp(),
+      ],
+    }).catch(() => {});
   } catch (err) {}
 }
 
@@ -601,11 +658,11 @@ client.on("interactionCreate", async (interaction) => {
   try {
     if (interaction.isCommand()) {
       if (interaction.commandName === "panel") {
-        return interaction.reply(createBasicTicketPanel());
+        return interaction.reply(createLegacyPanel());
       }
 
       if (interaction.commandName === "ticketpanel") {
-        return interaction.reply(createBasicTicketPanel());
+        return interaction.reply(createTicketPanel());
       }
 
       if (interaction.commandName === "adminpanel") {
@@ -662,10 +719,47 @@ client.on("interactionCreate", async (interaction) => {
         return openTicket(interaction, ticketMap[interaction.customId]);
       }
 
+      if (interaction.customId === "jc_script") {
+        if (isRateLimited(interaction.user.id, "script_send")) {
+          return replyWithHeart(interaction, {
+            content: "♻️ Please wait before requesting another script.",
+            ephemeral: true,
+          });
+        }
+
+        await sendScriptDM(interaction.user, "main");
+        return interaction.reply({
+          content: "✅ Your main script has been DM'd.",
+          ephemeral: true,
+        });
+      }
+
+      if (interaction.customId === "jc_mobile_script") {
+        if (isRateLimited(interaction.user.id, "script_send_mobile")) {
+          return replyWithHeart(interaction, {
+            content: "♻️ Please wait before requesting another mobile script.",
+            ephemeral: true,
+          });
+        }
+
+        await sendScriptDM(interaction.user, "mobile");
+        return interaction.reply({
+          content: "✅ Your mobile main script has been DM'd.",
+          ephemeral: true,
+        });
+      }
+
       if (interaction.customId === "jc_register") {
         if (isRateLimited(interaction.user.id, "register")) {
           return replyWithHeart(interaction, {
             content: "♻️ Please wait a bit before registering again.",
+            ephemeral: true,
+          });
+        }
+
+        if (db.accounts[interaction.user.id]) {
+          return replyWithHeart(interaction, {
+            content: "♻️ You already have one registered account.",
             ephemeral: true,
           });
         }
@@ -763,6 +857,13 @@ client.on("interactionCreate", async (interaction) => {
           });
         }
 
+        if (db.accounts[interaction.user.id]) {
+          return interaction.reply({
+            content: "You already have one registered account.",
+            ephemeral: true,
+          });
+        }
+
         db.accounts[interaction.user.id] = {
           username: safeUsername,
           passwordHash: hashPassword(safePassword),
@@ -806,4 +907,4 @@ if (!TOKEN) {
 
 loadDatabase();
 
-module.exports = { createBasicTicketPanel, openTicket };
+module.exports = { createLegacyPanel, createTicketPanel, openTicket };
