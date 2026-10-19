@@ -516,9 +516,43 @@ async function setScriptRoles(member, enabled, scriptType = "both") {
 async function sendScriptDM(user, scriptType) {
   // If CLIENT_REDEEM_URL isn't configured, fall back to the old direct loader URL.
   const clientRedeem = CLIENT_REDEEM_URL || (PUBLIC_BASE ? `${PUBLIC_BASE}/client/redeem` : null);
+  const redeemEndpoint = clientRedeem || "https://your-app.example.com/client/redeem";
 
-  // Lua loader: posts username + key + hwid to /client/redeem, fetches loaderUrl, then executes it.
-  const script = `-- Jayce loader (paste into your exploit executor)\n-- Replace USERNAME and KEY with your values\nlocal USERNAME = \"YOUR_ROBLOX_USERNAME\"\nlocal KEY = \"JAYCE-REPLACE-KEY\"\nlocal HWID = (pcall(function() return game:GetService(\"RbxAnalyticsService\"):GetClientId() end) and game:GetService(\"RbxAnalyticsService\"):GetClientId()) or \"unknown-hwid\"\nlocal HttpService = game:GetService(\"HttpService\")\nlocal ok, response = pcall(function()\n  local request = (request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))\n  if not request then error(\"Executor does not support HTTP requests.\") end\n  return request({\n    Url = \"${clientRedeem || "https://your-app.example.com/client/redeem"}\",\n    Method = \"POST\",\n    Headers = { [\"Content-Type\"] = \"application/json\" },\n    Body = HttpService:JSONEncode({ username = USERNAME, key = KEY, hwid = HWID })\n  })\nend)\nif not ok then error(\"[/jayce] Could not reach server: \" .. tostring(response)) end\nlocal data = HttpService:JSONDecode(response.Body)\nif not data.ok then error(\"[/jayce] \" .. tostring(data.error or \"Redeem failed\")) end\nlocal loaderUrl = data.loaderUrl\nif not loaderUrl then error(\"[/jayce] No loader URL returned from server\") end\nlocal ok2, resp2 = pcall(function()\n  local request = (request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))\n  return request({ Url = loaderUrl, Method = \"GET\" })\nend)\nif not ok2 then error(\"[/jayce] Could not fetch loader: \" .. tostring(resp2)) end\nlocal code = resp2.Body\nlocal func, err = loadstring(code)\nif not func then error(\"[/jayce] Failed to load loader: \" .. tostring(err)) end\npcall(func)\n`;
+  const luaLines = [
+    "-- Jayce loader (paste into your exploit executor)",
+    "-- Replace USERNAME and KEY with your values",
+    'local USERNAME = "YOUR_ROBLOX_USERNAME"',
+    'local KEY = "JAYCE-REPLACE-KEY"',
+    'local HWID = (pcall(function() return game:GetService("RbxAnalyticsService"):GetClientId() end) and game:GetService("RbxAnalyticsService"):GetClientId()) or "unknown-hwid"',
+    'local HttpService = game:GetService("HttpService")',
+    'local ok, response = pcall(function()',
+    '  local request = (request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))',
+    '  if not request then error("Executor does not support HTTP requests.") end',
+    '  return request({',
+    '    Url = "' + redeemEndpoint + '",',
+    '    Method = "POST",',
+    '    Headers = { ["Content-Type"] = "application/json" },',
+    '    Body = HttpService:JSONEncode({ username = USERNAME, key = KEY, hwid = HWID })',
+    '  })',
+    'end)',
+    'if not ok then error("[/jayce] Could not reach server: " .. tostring(response)) end',
+    'local success, data = pcall(function() return HttpService:JSONDecode(response.Body) end)',
+    'if not success or not data then error("[/jayce] Invalid JSON from server") end',
+    'if not data.ok then error("[/jayce] " .. tostring(data.error or "Redeem failed")) end',
+    'local loaderUrl = data.loaderUrl',
+    'if not loaderUrl then error("[/jayce] No loader URL returned from server") end',
+    'local ok2, resp2 = pcall(function()',
+    '  local request = (request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request))',
+    '  return request({ Url = loaderUrl, Method = "GET" })',
+    'end)',
+    'if not ok2 then error("[/jayce] Could not fetch loader: " .. tostring(resp2)) end',
+    'local code = resp2.Body',
+    'local func, err = loadstring(code)',
+    'if not func then error("[/jayce] Failed to load loader: " .. tostring(err)) end',
+    'pcall(func)'
+  ];
+
+  const script = luaLines.join("\n");
 
   const embed = makeEmbed(
     scriptType === "mobile" ? "📱 Jayce Mobile Main" : "🕸️ Jayce Main Script",
@@ -527,7 +561,7 @@ async function sendScriptDM(user, scriptType) {
 
   await user.send({
     embeds: [embed],
-    content: `\`\`\`lua\n${script}\n\`\`\``,
+    content: "```lua\n" + script + "\n```",
   });
 }
 
