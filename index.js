@@ -37,13 +37,55 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DB_FILE = path.join(DATA_DIR, "database.json");
 const PANEL_COLOR = 0xff7518;
 
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMITS = new Map();
+
 // ==================== DISCORD CLIENT ====================
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
 
-// ==================== RENDER KEEP-ALIVE SERVER ====================
+// ==================== EXPRESS SERVER ====================
 const app = express();
+app.use(express.json({ limit: "1mb" }));
+
+function appendLog(action, details = {}) {
+  db.logs.push({
+    timestamp: new Date().toISOString(),
+    action,
+    ...details,
+  });
+
+  if (db.logs.length > 2000) {
+    db.logs = db.logs.slice(-2000);
+  }
+
+  saveDatabase();
+}
+
+function isRateLimited(userId, action, limitMs = RATE_LIMIT_WINDOW_MS, maxCalls = 3) {
+  const key = `${userId}:${action}`;
+  const now = Date.now();
+  const entries = RATE_LIMITS.get(key) || [];
+  const current = entries.filter((ts) => now - ts < limitMs);
+
+  if (current.length >= maxCalls) {
+    RATE_LIMITS.set(key, current);
+    return true;
+  }
+
+  current.push(now);
+  RATE_LIMITS.set(key, current);
+  return false;
+}
+
+function isValidUsername(username) {
+  return typeof username === "string" && /^[A-Za-z0-9_]{3,20}$/.test(username.trim());
+}
+
+function isValidPassword(password) {
+  return typeof password === "string" && password.trim().length >= 6;
+}
 
 app.get("/", (_req, res) => {
   res.status(200).send("🎃 Jayce Main is running! 🦇");
@@ -54,6 +96,126 @@ app.get("/health", (_req, res) => {
     status: "online",
     bot: "Jayce Main",
     discord: client.isReady(),
+  });
+});
+
+app.get("/logs", (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    logs: db.logs.slice(-50),
+  });
+});
+
+app.get("/keys/:key", (req, res) => {
+  const key = req.params.key;
+  const entry = db.keys[key];
+
+  if (!entry) {
+    return res.status(404).json({ ok: false, error: "Key not found." });
+  }
+
+  return res.status(200).json({
+    ok: true,
+    key,
+    userId: entry.userId,
+    redeemed: Boolean(entry.redeemed),
+    revoked: Boolean(entry.revoked),
+    hwid: entry.hwid || null,
+    createdAt: entry.createdAt || null,
+    redeemedAt: entry.redeemedAt || null,
+  });
+});
+
+app.post("/keys/:key/reset-hwid", (req, res) => {
+  const key = req.params.key;
+  const { userId, staffId } = req.body || {};
+  const entry = db.keys[key];
+
+  if (!entry) {
+    return res.status(404).json({ ok: false, error: "Key not found." });
+  }
+
+  if (userId && entry.userId !== String(userId)) {
+    return res.status(403).json({
+      ok: false,
+      error: "Key does not belong to the submitted userId.",
+    });
+  }
+
+  delete entry.hwid;
+  entry.redeemed = false;
+  entry.revoked = false;
+
+  appendLog("hwid_reset", {
+    key,
+    userId: entry.userId,
+    staffId: staffId || null,
+  });
+
+  saveDatabase();
+  return res.status(200).json({ ok: true, message: "HWID reset for key." });
+});
+
+app.post("/redeem", (req, res) => {
+  const { key, userId, hwid } = req.body || {};
+
+  if (!key || !userId || !hwid) {
+    return res.status(400).json({
+      ok: false,
+      error: "Missing key, userId, or hwid.",
+    });
+  }
+
+  const entry = db.keys[key];
+  if (!entry) {
+    return res.status(404).json({ ok: false, error: "Invalid key." });
+  }
+
+  if (String(entry.userId) !== String(userId)) {
+    return res.status(403).json({
+      ok: false,
+      error: "This key does not belong to this user.",
+    });
+  }
+
+  if (entry.revoked) {
+    return res.status(403).json({ ok: false, error: "This key has been revoked." });
+  }
+
+  if (entry.redeemed && entry.hwid && entry.hwid !== hwid) {
+    appendLog("hwid_mismatch", {
+      key,
+      userId,
+      submittedHwid: String(hwid),
+      storedHwid: String(entry.hwid),
+    });
+
+    return res.status(403).json({
+      ok: false,
+      error: "HWID mismatch. Contact staff for a reset.",
+    });
+  }
+
+  if (!entry.hwid) {
+    entry.hwid = String(hwid);
+  }
+
+  entry.redeemed = true;
+  entry.redeemedAt = new Date().toISOString();
+  db.access[userId] = true;
+
+  appendLog("key_redeem", {
+    key,
+    userId,
+    hwid: String(hwid),
+  });
+
+  saveDatabase();
+
+  return res.status(200).json({
+    ok: true,
+    message: "Key redeemed successfully.",
+    hwidBound: true,
   });
 });
 
@@ -107,6 +269,7 @@ let db = {
   hwids: {},
   accounts: {},
   access: {},
+  logs: [],
 };
 
 function saveDatabase() {
@@ -134,7 +297,12 @@ function loadDatabase() {
         hwids: loaded.hwids || {},
         accounts: loaded.accounts || {},
         access: loaded.access || {},
+        logs: loaded.logs || [],
       };
+    }
+
+    if (!Array.isArray(db.logs)) {
+      db.logs = [];
     }
 
     saveDatabase();
@@ -306,6 +474,25 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
+    .setName("resetpassword")
+    .setDescription("Reset a buyer's account password")
+    .addUserOption((o) =>
+      o.setName("user").setDescription("Account owner").setRequired(true)
+    )
+    .addStringOption((o) =>
+      o
+        .setName("password")
+        .setDescription("New password")
+        .setRequired(true)
+        .setMinLength(6)
+        .setMaxLength(128)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("exportlogs")
+    .setDescription("Show recent Jayce activity logs"),
+
+  new SlashCommandBuilder()
     .setName("jaycescripts")
     .setDescription("Send a buyer their Jayce script")
     .addUserOption((o) =>
@@ -439,6 +626,13 @@ client.on("interactionCreate", async (interaction) => {
       const userId = interaction.user.id;
 
       if (interaction.customId === "jc_register") {
+        if (isRateLimited(userId, "register")) {
+          return replyWithHeart(interaction, {
+            content: "♻️ Please wait a bit before registering again.",
+            ephemeral: true,
+          });
+        }
+
         const modal = new ModalBuilder()
           .setCustomId("jc_register_modal")
           .setTitle("♡ Jayce Registration");
@@ -449,7 +643,7 @@ client.on("interactionCreate", async (interaction) => {
           .setStyle(TextInputStyle.Short)
           .setPlaceholder("Enter your Roblox username")
           .setRequired(true)
-          .setMaxLength(32);
+          .setMaxLength(20);
 
         const passwordInput = new TextInputBuilder()
           .setCustomId("account_password")
@@ -479,6 +673,7 @@ client.on("interactionCreate", async (interaction) => {
                 `**Disabled access records:** ${
                   Object.values(db.access).filter((value) => value === false).length
                 }`,
+                `**Audit entries:** ${db.logs.length}`,
               ].join("\n")
             ),
           ],
@@ -501,6 +696,13 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       if (interaction.customId === "jc_key") {
+        if (isRateLimited(userId, "key_generate")) {
+          return replyWithHeart(interaction, {
+            content: "♻️ Please wait before generating another key.",
+            ephemeral: true,
+          });
+        }
+
         const modal = new ModalBuilder()
           .setCustomId("jc_key_modal")
           .setTitle("♡ Get Your Jayce Key");
@@ -511,7 +713,7 @@ client.on("interactionCreate", async (interaction) => {
           .setStyle(TextInputStyle.Short)
           .setPlaceholder("Enter your Roblox username")
           .setRequired(true)
-          .setMaxLength(32);
+          .setMaxLength(20);
 
         const passwordInput = new TextInputBuilder()
           .setCustomId("account_password")
@@ -530,6 +732,13 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       if (interaction.customId === "jc_mobilemain") {
+        if (isRateLimited(userId, "mobile_redeem")) {
+          return replyWithHeart(interaction, {
+            content: "♻️ Please wait before trying Mobile Main again.",
+            ephemeral: true,
+          });
+        }
+
         const modal = new ModalBuilder()
           .setCustomId("jc_mobilemain_modal")
           .setTitle("📱 Mobile Main — Verify");
@@ -540,7 +749,7 @@ client.on("interactionCreate", async (interaction) => {
           .setStyle(TextInputStyle.Short)
           .setPlaceholder("Enter your Roblox username")
           .setRequired(true)
-          .setMaxLength(32);
+          .setMaxLength(20);
 
         const passwordInput = new TextInputBuilder()
           .setCustomId("account_password")
@@ -578,7 +787,7 @@ client.on("interactionCreate", async (interaction) => {
           .setStyle(TextInputStyle.Short)
           .setPlaceholder("Enter your Roblox username")
           .setRequired(true)
-          .setMaxLength(32);
+          .setMaxLength(20);
 
         const passwordInput = new TextInputBuilder()
           .setCustomId("account_password")
@@ -601,14 +810,40 @@ client.on("interactionCreate", async (interaction) => {
 
     if (interaction.isModalSubmit()) {
       if (interaction.customId === "jc_register_modal") {
-        const username = interaction.fields
-          .getTextInputValue("roblox_username")
-          .trim();
+        const username = interaction.fields.getTextInputValue("roblox_username").trim();
         const password = interaction.fields.getTextInputValue("account_password");
 
-        if (!username || !password) {
+        if (!isValidUsername(username)) {
           return replyWithHeart(interaction, {
-            content: "Please enter a valid username and password.",
+            content: "Please enter a valid Roblox username (3-20 letters, numbers, or underscores).",
+            ephemeral: true,
+          });
+        }
+
+        if (!isValidPassword(password)) {
+          return replyWithHeart(interaction, {
+            content: "Please enter a password with at least 6 characters.",
+            ephemeral: true,
+          });
+        }
+
+        const existingUsername = Object.values(db.accounts).find(
+          (account) =>
+            account &&
+            typeof account.username === "string" &&
+            account.username.toLowerCase() === username.toLowerCase()
+        );
+
+        if (existingUsername) {
+          return replyWithHeart(interaction, {
+            content: "That Roblox username is already registered.",
+            ephemeral: true,
+          });
+        }
+
+        if (db.accounts[interaction.user.id]) {
+          return replyWithHeart(interaction, {
+            content: "You are already registered. Use Get Key or Reset HWID instead.",
             ephemeral: true,
           });
         }
@@ -619,6 +854,12 @@ client.on("interactionCreate", async (interaction) => {
           registeredAt: new Date().toISOString(),
           discordTag: interaction.user.tag,
         };
+
+        appendLog("register", {
+          userId: interaction.user.id,
+          robloxUsername: username,
+          discordTag: interaction.user.tag,
+        });
 
         saveDatabase();
 
@@ -634,9 +875,7 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       if (interaction.customId === "jc_key_modal") {
-        const username = interaction.fields
-          .getTextInputValue("roblox_username")
-          .trim();
+        const username = interaction.fields.getTextInputValue("roblox_username").trim();
         const password = interaction.fields.getTextInputValue("account_password");
 
         if (!username || !password) {
@@ -668,7 +907,14 @@ client.on("interactionCreate", async (interaction) => {
           userId: interaction.user.id,
           createdAt: new Date().toISOString(),
           redeemed: false,
+          revoked: false,
         };
+
+        appendLog("key_generated", {
+          userId: interaction.user.id,
+          key: code,
+          robloxUsername: username,
+        });
 
         saveDatabase();
 
@@ -695,9 +941,7 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       if (interaction.customId === "jc_mobilemain_modal") {
-        const username = interaction.fields
-          .getTextInputValue("roblox_username")
-          .trim();
+        const username = interaction.fields.getTextInputValue("roblox_username").trim();
         const password = interaction.fields.getTextInputValue("account_password");
         const accessKey = interaction.fields.getTextInputValue("access_key").trim();
 
@@ -733,15 +977,34 @@ client.on("interactionCreate", async (interaction) => {
           });
         }
 
-        if (keyEntry.redeemed) {
+        if (keyEntry.revoked) {
+          return replyWithHeart(interaction, {
+            content: "That access key has been revoked.",
+            ephemeral: true,
+          });
+        }
+
+        if (keyEntry.redeemed && keyEntry.hwid) {
           return replyWithHeart(interaction, {
             content: "That access key has already been redeemed.",
             ephemeral: true,
           });
         }
 
+        if (!keyEntry.hwid) {
+          keyEntry.hwid = `discord:${interaction.user.id}`;
+        }
+
         keyEntry.redeemed = true;
         keyEntry.redeemedAt = new Date().toISOString();
+        db.access[interaction.user.id] = true;
+
+        appendLog("mobile_redeemed", {
+          userId: interaction.user.id,
+          key: accessKey,
+          hwid: keyEntry.hwid,
+        });
+
         saveDatabase();
 
         try {
@@ -760,9 +1023,7 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       if (interaction.customId === "jc_resethwid_modal") {
-        const username = interaction.fields
-          .getTextInputValue("roblox_username")
-          .trim();
+        const username = interaction.fields.getTextInputValue("roblox_username").trim();
         const password = interaction.fields.getTextInputValue("account_password");
 
         if (!username || !password) {
@@ -810,9 +1071,15 @@ client.on("interactionCreate", async (interaction) => {
             Object.prototype.hasOwnProperty.call(entry, "hwid")
           ) {
             delete entry.hwid;
+            entry.redeemed = false;
             cleared = true;
           }
         }
+
+        appendLog("hwid_reset_self", {
+          userId: interaction.user.id,
+          robloxUsername: username,
+        });
 
         saveDatabase();
 
@@ -895,6 +1162,8 @@ client.on("interactionCreate", async (interaction) => {
           "`/grantaccess` — grant access",
           "`/disableaccess` — disable access",
           "`/generate-key` — generate a key",
+          "`/resetpassword` — reset a buyer password",
+          "`/exportlogs` — view recent logs",
           "",
           "**Scripts**",
           "`/jaycescripts` — send a script",
@@ -942,8 +1211,14 @@ client.on("interactionCreate", async (interaction) => {
 
     if (commandName === "generate-key") {
       const user = interaction.options.getUser("user", true);
-      let code;
+      if (isRateLimited(user.id, "staff_key_generate")) {
+        return replyWithHeart(interaction, {
+          content: "♻️ Please wait before generating another key for that user.",
+          ephemeral: true,
+        });
+      }
 
+      let code;
       do {
         code = makeKey();
       } while (db.keys[code]);
@@ -952,7 +1227,14 @@ client.on("interactionCreate", async (interaction) => {
         userId: user.id,
         createdAt: new Date().toISOString(),
         redeemed: false,
+        revoked: false,
       };
+
+      appendLog("key_generated_staff", {
+        userId: user.id,
+        key: code,
+        staffId: interaction.user.id,
+      });
 
       saveDatabase();
 
@@ -976,6 +1258,68 @@ client.on("interactionCreate", async (interaction) => {
           ephemeral: true,
         });
       }
+    }
+
+    if (commandName === "resetpassword") {
+      const user = interaction.options.getUser("user", true);
+      const password = interaction.options.getString("password", true);
+
+      if (!isValidPassword(password)) {
+        return replyWithHeart(interaction, {
+          content: "Password must be at least 6 characters.",
+          ephemeral: true,
+        });
+      }
+
+      if (!db.accounts[user.id]) {
+        return replyWithHeart(interaction, {
+          content: "That user does not have an account registered yet.",
+          ephemeral: true,
+        });
+      }
+
+      db.accounts[user.id].password = hashPassword(password);
+      appendLog("password_reset", {
+        userId: user.id,
+        staffId: interaction.user.id,
+      });
+      saveDatabase();
+
+      return replyWithHeart(interaction, {
+        content: `♡ Password reset for ${user}.`,
+        ephemeral: true,
+      });
+    }
+
+    if (commandName === "exportlogs") {
+      const recent = db.logs.slice(-10).reverse();
+
+      if (!recent.length) {
+        return replyWithHeart(interaction, {
+          content: "No logs yet.",
+          ephemeral: true,
+        });
+      }
+
+      const entries = recent.map(
+        (entry) =>
+          `• **${entry.action}** — ${new Date(entry.timestamp).toLocaleString()} — ${JSON.stringify({
+            userId: entry.userId || null,
+            staffId: entry.staffId || null,
+            key: entry.key || null,
+            hwid: entry.hwid || null,
+          })}`
+      );
+
+      return replyWithHeart(interaction, {
+        embeds: [
+          makeEmbed(
+            "♡ Recent Jayce Logs",
+            entries.join("\n").slice(0, 4000)
+          ),
+        ],
+        ephemeral: true,
+      });
     }
 
     if (commandName === "jaycescripts") {
@@ -1369,9 +1713,15 @@ client.on("interactionCreate", async (interaction) => {
           Object.prototype.hasOwnProperty.call(entry, "hwid")
         ) {
           delete entry.hwid;
+          entry.redeemed = false;
           cleared = true;
         }
       }
+
+      appendLog("staff_hwid_reset", {
+        userId: user.id,
+        staffId: interaction.user.id,
+      });
 
       saveDatabase();
 
