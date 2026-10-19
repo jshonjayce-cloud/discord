@@ -60,6 +60,54 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`[WEB] Listening on port ${PORT}`);
 });
 
+// ==================== KEEP-ALIVE PINGS ====================
+// Configure KEEP_ALIVE_URL to your public service URL (e.g. https://your-service.onrender.com/)
+// or an external hc-ping / UptimeRobot / Pingdom endpoint. If not set, no pings run.
+const KEEP_ALIVE_URL = process.env.KEEP_ALIVE_URL || process.env.RENDER_EXTERNAL_URL;
+
+if (KEEP_ALIVE_URL) {
+  const { URL } = require("url");
+  const http = require("http");
+  const https = require("https");
+
+  function pingKeepAlive() {
+    try {
+      const urlObj = new URL(KEEP_ALIVE_URL);
+      const lib = urlObj.protocol === "http:" ? http : https;
+
+      const req = lib.get(KEEP_ALIVE_URL, (res) => {
+        // consume body to avoid memory leaks
+        res.on("data", () => {});
+        res.on("end", () => {
+          // optional: could log res.statusCode in debug mode
+        });
+      });
+
+      req.on("error", (err) => {
+        console.error("[KEEPALIVE] Ping error:", err.message);
+      });
+
+      // safety timeout
+      req.setTimeout(10_000, () => {
+        req.abort();
+      });
+    } catch (err) {
+      console.error("[KEEPALIVE] Invalid KEEP_ALIVE_URL:", err.message);
+    }
+  }
+
+  // ping every 4 minutes (use a value < 10 minutes for many free hosts)
+  const INTERVAL_MS = 4 * 60 * 1000;
+  setInterval(pingKeepAlive, INTERVAL_MS);
+
+  // initial delayed ping so server has started
+  setTimeout(pingKeepAlive, 5_000);
+
+  console.log(`[KEEPALIVE] Keep-alive pings enabled for ${KEEP_ALIVE_URL}`);
+} else {
+  console.log("[KEEPALIVE] KEEP_ALIVE_URL not set — no keep-alive pings will run.");
+}
+
 // ==================== DATABASE ====================
 let db = {
   keys: {},
