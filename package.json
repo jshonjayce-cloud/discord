@@ -1,20 +1,14 @@
 {
-  "name": "jayce-discord-bot",
+  "name": "discord-ticket-bot",
   "version": "1.0.0",
-  "private": true,
+  "description": "Discord ticket bot with private ticket threads",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
-  "engines": {
-    "node": ">=20"
-  },
   "dependencies": {
-    "discord.js": "^14.19.3",
-    "express": "^5.1.0",
-    "cors": "^2.8.5",
-    "@discordjs/rest": "^1.6.0",
-    "discord-api-types": "^0.37.36",
-    "@discordjs/builders": "^1.6.0"
+    "@discordjs/rest": "^2.4.0",
+    "discord-api-types": "^0.37.113",
+    "discord.js": "^14.16.3"
   }
 }
