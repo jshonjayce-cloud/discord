@@ -160,7 +160,7 @@ if (
 typeof options.content === 'string' &&
 !options.content.trimStart().startsWith('♡')
 ) {
-options.content = `♡ ${options.content};
+options.content = `♡ ${options.content}`;
 }
 
 if (Array.isArray(options.embeds)) {
