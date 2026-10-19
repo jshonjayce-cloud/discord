@@ -443,6 +443,51 @@ async function sendScriptDM(user, scriptType) {
   });
 }
 
+async function sendGeneratedKeyDM(user, username, password) {
+  const account = db.accounts[user.id];
+  if (!account) {
+    throw new Error("You do not have a registered account yet.");
+  }
+
+  const normalizedUsername = String(username).trim();
+  if (account.username.toLowerCase() !== normalizedUsername.toLowerCase()) {
+    throw new Error("The Roblox username does not match your registered account.");
+  }
+
+  if (!verifyPassword(account.passwordHash, password)) {
+    throw new Error("The password is incorrect.");
+  }
+
+  const accessKey = makeKey();
+  db.keys[accessKey] = {
+    key: accessKey,
+    userId: user.id,
+    createdAt: new Date().toISOString(),
+    redeemed: false,
+    revoked: false,
+  };
+
+  appendLog("mobile_key_generated", {
+    userId: user.id,
+    username: normalizedUsername,
+    key: accessKey,
+  });
+
+  saveDatabase();
+
+  const embed = makeEmbed(
+    "🔑 Your Jayce Key",
+    "Use this key to access the mobile loader. Keep it private."
+  );
+
+  await user.send({
+    embeds: [embed],
+    content: `\`\`\`${accessKey}\`\`\``,
+  });
+
+  return accessKey;
+}
+
 function createLegacyPanel() {
   return {
     embeds: [
@@ -624,18 +669,32 @@ client.on("interactionCreate", async (interaction) => {
           });
         }
 
-        if (isRateLimited(interaction.user.id, "script_send_mobile")) {
-          return replyWithHeart(interaction, {
-            content: "♻️ Please wait before requesting another mobile script.",
-            ephemeral: true,
-          });
-        }
+        const modal = new ModalBuilder()
+          .setCustomId("jc_mobile_modal")
+          .setTitle("📱 Jayce Mobile Main");
 
-        await sendScriptDM(interaction.user, "mobile");
-        return interaction.reply({
-          content: "✅ Your mobile main script has been DM'd.",
-          ephemeral: true,
-        });
+        const usernameInput = new TextInputBuilder()
+          .setCustomId("mobile_username")
+          .setLabel("Roblox username")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter your Roblox username")
+          .setRequired(true)
+          .setMaxLength(20);
+
+        const passwordInput = new TextInputBuilder()
+          .setCustomId("mobile_password")
+          .setLabel("Password")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter the password you registered with")
+          .setRequired(true)
+          .setMaxLength(128);
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(usernameInput),
+          new ActionRowBuilder().addComponents(passwordInput)
+        );
+
+        return interaction.showModal(modal);
       }
 
       if (interaction.customId === "jc_register") {
@@ -774,6 +833,38 @@ client.on("interactionCreate", async (interaction) => {
           ],
           ephemeral: true,
         });
+      }
+
+      if (interaction.customId === "jc_mobile_modal") {
+        const username = interaction.fields.getTextInputValue("mobile_username");
+        const password = interaction.fields.getTextInputValue("mobile_password");
+
+        if (!username || !password) {
+          return interaction.reply({
+            content: "Please enter both username and password.",
+            ephemeral: true,
+          });
+        }
+
+        if (!hasRole(interaction.member, MOBILE_MAIN_ROLE_ID)) {
+          return interaction.reply({
+            content: "❌ You do not have permission to use the mobile panel.",
+            ephemeral: true,
+          });
+        }
+
+        try {
+          const accessKey = await sendGeneratedKeyDM(interaction.user, username, password);
+          return interaction.reply({
+            content: `✅ Your generated key has been sent to your DMs: \`\`${accessKey}\`\``,
+            ephemeral: true,
+          });
+        } catch (error) {
+          return interaction.reply({
+            content: `❌ ${error.message}`,
+            ephemeral: true,
+          });
+        }
       }
     }
   } catch (error) {
