@@ -4,8 +4,6 @@ const {
   EmbedBuilder,
   ActionRowBuilder,
   StringSelectMenuBuilder,
-  ChannelType,
-  PermissionsBitField,
 } = require("discord.js");
 
 const { REST } = require("@discordjs/rest");
@@ -16,7 +14,6 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
 const TICKET_CHANNEL_ID = "1556208545278595142";
-const STAFF_ROLE_ID = "1552637829815865414";
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
@@ -88,38 +85,6 @@ async function sendTicketPanel(channel) {
   console.log(`[TICKET] Panel sent in ${channel.name}`);
 }
 
-async function setupTicketPermissions(thread, userId, guild) {
-  await thread.permissionOverwrites.set([
-    {
-      id: guild.roles.everyone.id,
-      deny: [
-        PermissionsBitField.Flags.ViewChannel,
-        PermissionsBitField.Flags.ReadMessageHistory,
-      ],
-    },
-    {
-      id: userId,
-      allow: [
-        PermissionsBitField.Flags.ViewChannel,
-        PermissionsBitField.Flags.SendMessages,
-        PermissionsBitField.Flags.ReadMessageHistory,
-        PermissionsBitField.Flags.AttachFiles,
-        PermissionsBitField.Flags.AddReactions,
-      ],
-    },
-    {
-      id: STAFF_ROLE_ID,
-      allow: [
-        PermissionsBitField.Flags.ViewChannel,
-        PermissionsBitField.Flags.SendMessages,
-        PermissionsBitField.Flags.ReadMessageHistory,
-        PermissionsBitField.Flags.AttachFiles,
-        PermissionsBitField.Flags.AddReactions,
-      ],
-    },
-  ]);
-}
-
 client.on("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
 
@@ -171,47 +136,18 @@ client.on("interactionCreate", async (interaction) => {
         });
       }
 
-      const threadName = `ticket-${user.username}-${reason}`;
+      const ticketMessage = new EmbedBuilder()
+        .setColor(0x5865f2)
+        .setTitle(`Ticket: ${reason}`)
+        .setDescription(`Opened by: ${user.tag}\nReason: ${reason}\n\nPlease wait for support.`);
 
-      const existingThread = channel.threads.cache.find(
-        (thread) =>
-          thread.name.toLowerCase() === threadName.toLowerCase() &&
-          thread.ownerId === user.id
-      );
-
-      if (existingThread) {
-        await interaction.update({
-          content: `⚠️ You already have an open ticket: ${existingThread}`,
-          components: [],
-        });
-        return;
-      }
-
-      const thread = await channel.threads.create({
-        name: threadName,
-        autoArchiveDuration: 60,
-        type: ChannelType.PrivateThread,
-        invitable: false,
-        reason: `Ticket for ${reason}`,
+      await channel.send({
+        embeds: [ticketMessage],
       });
 
-      await setupTicketPermissions(thread, user.id, channel.guild);
-      await thread.members.add(user.id);
-
-      await thread.send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x5865f2)
-            .setTitle(`New ticket: ${reason}`)
-            .setDescription(
-              `Opened by: ${user.tag}\n\nPlease describe your issue below.`
-            ),
-        ],
-      });
-
-      await interaction.update({
-        content: `✅ Your ticket has been created: ${thread}`,
-        components: [],
+      await interaction.reply({
+        content: `✅ Ticket posted in ${channel}.`,
+        ephemeral: true,
       });
     }
   } catch (error) {
