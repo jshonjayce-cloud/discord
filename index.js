@@ -19,11 +19,7 @@ const TICKET_CHANNEL_ID = "1556208545278595142";
 const STAFF_ROLE_ID = "1552637829815865414";
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.MessageContent,
-  ],
+  intents: [GatewayIntentBits.Guilds],
 });
 
 const REASON_OPTIONS = [
