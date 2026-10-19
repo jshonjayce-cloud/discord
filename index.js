@@ -11,66 +11,55 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-} = require('discord.js');
+} = require("discord.js");
 
-const express = require('express');
-const fs = require('fs');
-const path = require('path');
+const express = require("express");
+const fs = require("fs");
+const path = require("path");
 
-// =============== CONFIGURATION ===============
+// ==================== CONFIG ====================
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
-const STAFF_ROLE_ID = '1552637829815865414';
-const MAIN_ROLE_ID = '1552637429456961657';
+const STAFF_ROLE_ID = "1552637829815865414";
+const MAIN_ROLE_ID = "1552637429456961657";
 const MOBILE_MAIN_ROLE_ID =
-  process.env.MOBILE_MAIN_ROLE_ID || '1554321313332469800';
+  process.env.MOBILE_MAIN_ROLE_ID || "1554321313332469800";
 
-const PANEL_COLOR = 0xFF7518;
+const LOADER_URL =
+  "https://flowauth.net/v1/loaders/a98aeecca217266364e1eb0396c7a283.lua";
 
-const UPDATED_LOADER =
-  'loadstring(game:HttpGet("https://flowauth.net/v1/loaders/a98aeecca217266364e1eb0396c7a283.lua"))()';
+const PORT = process.env.PORT || 3000;
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+const DB_FILE = path.join(DATA_DIR, "database.json");
+const PANEL_COLOR = 0xff7518;
 
-// Both currently use the same loader URL.
-const GET_SCRIPT_TEXT = UPDATED_LOADER;
-const MOBILE_MAIN_LOADSTRING = UPDATED_LOADER;
-
-// =============== DISCORD CLIENT ===============
+// ==================== DISCORD CLIENT ====================
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
 
-// =============== EXPRESS / RENDER ===============
+// ==================== RENDER KEEP-ALIVE SERVER ====================
 const app = express();
 
-app.get('/', (_req, res) => {
-  res.status(200).send('🎃 Jayce Main is running. Happy Halloween! 🦇');
+app.get("/", (_req, res) => {
+  res.status(200).send("🎃 Jayce Main is running! 🦇");
 });
 
-app.get('/health', (_req, res) => {
+app.get("/health", (_req, res) => {
   res.status(200).json({
-    status: 'online',
-    bot: 'Jayce Main',
+    status: "online",
+    bot: "Jayce Main",
     discord: client.isReady(),
   });
 });
 
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`[WEB] Listening on port ${PORT}`);
 });
 
-// =============== DATABASE ===============
-const DATA_DIR =
-  process.env.DATA_DIR || path.join(__dirname, 'data');
-
-const DB_FILE = path.join(DATA_DIR, 'database.json');
-
+// ==================== DATABASE ====================
 let db = {
   keys: {},
   blacklisted: {},
@@ -84,15 +73,10 @@ function saveDatabase() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
 
     const tempFile = `${DB_FILE}.tmp`;
-
-    fs.writeFileSync(
-      tempFile,
-      JSON.stringify(db, null, 2)
-    );
-
+    fs.writeFileSync(tempFile, JSON.stringify(db, null, 2));
     fs.renameSync(tempFile, DB_FILE);
   } catch (error) {
-    console.error('[DATABASE] Save error:', error);
+    console.error("[DATABASE] Save error:", error);
   }
 }
 
@@ -101,9 +85,7 @@ function loadDatabase() {
     fs.mkdirSync(DATA_DIR, { recursive: true });
 
     if (fs.existsSync(DB_FILE)) {
-      const loaded = JSON.parse(
-        fs.readFileSync(DB_FILE, 'utf8')
-      );
+      const loaded = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
 
       db = {
         keys: loaded.keys || {},
@@ -115,19 +97,17 @@ function loadDatabase() {
     }
 
     saveDatabase();
-    console.log('[DATABASE] Loaded successfully.');
+    console.log("[DATABASE] Loaded successfully.");
   } catch (error) {
-    console.error('[DATABASE] Load error:', error);
+    console.error("[DATABASE] Load error:", error);
   }
 }
 
 loadDatabase();
 
-// =============== HELPERS ===============
+// ==================== HELPERS ====================
 function isStaff(member) {
-  return Boolean(
-    member?.roles?.cache?.has(STAFF_ROLE_ID)
-  );
+  return Boolean(member?.roles?.cache?.has(STAFF_ROLE_ID));
 }
 
 function isBlacklisted(userId) {
@@ -143,28 +123,23 @@ function makeEmbed(title, description) {
     .setColor(PANEL_COLOR)
     .setTitle(title)
     .setDescription(description)
-    .setFooter({
-      text: '🎃 jayce  ♡  spooky & secure 🦇',
-    })
+    .setFooter({ text: "🎃 jayce ♡ spooky & secure 🦇" })
     .setTimestamp();
 }
 
 function replyWithHeart(interaction, options) {
   if (
-    typeof options.content === 'string' &&
-    !options.content.trimStart().startsWith('♡')
+    typeof options.content === "string" &&
+    !options.content.trimStart().startsWith("♡")
   ) {
     options.content = `♡ ${options.content}`;
   }
 
   if (Array.isArray(options.embeds)) {
-    options.embeds = options.embeds.map(embed => {
+    options.embeds = options.embeds.map((embed) => {
       const title = embed.data?.title;
 
-      if (
-        typeof title === 'string' &&
-        !title.trimStart().startsWith('♡')
-      ) {
+      if (typeof title === "string" && !title.trimStart().startsWith("♡")) {
         embed.setTitle(`♡ ${title}`);
       }
 
@@ -176,13 +151,11 @@ function replyWithHeart(interaction, options) {
 }
 
 function makeCode(length = 24) {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let result = '';
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let result = "";
 
   for (let i = 0; i < length; i++) {
-    result += chars[
-      Math.floor(Math.random() * chars.length)
-    ];
+    result += chars[Math.floor(Math.random() * chars.length)];
   }
 
   return result;
@@ -198,15 +171,21 @@ async function getGuildMember(guild, userId) {
   }
 }
 
-async function setScriptRoles(member, enabled) {
-  const roleIds = [
-    ...new Set([MAIN_ROLE_ID, MOBILE_MAIN_ROLE_ID]),
-  ];
+async function setScriptRoles(member, enabled, scriptType = "both") {
+  const roleIds = [];
 
-  for (const roleId of roleIds) {
+  if (scriptType === "main" || scriptType === "both") {
+    roleIds.push(MAIN_ROLE_ID);
+  }
+
+  if (scriptType === "mobile" || scriptType === "both") {
+    roleIds.push(MOBILE_MAIN_ROLE_ID);
+  }
+
+  for (const roleId of [...new Set(roleIds)]) {
     const role =
       member.guild.roles.cache.get(roleId) ||
-      await member.guild.roles.fetch(roleId).catch(() => null);
+      (await member.guild.roles.fetch(roleId).catch(() => null));
 
     if (!role) {
       throw new Error(`Role not found: ${roleId}`);
@@ -221,16 +200,11 @@ async function setScriptRoles(member, enabled) {
 }
 
 async function sendScriptDM(user, scriptType) {
-  const script =
-    scriptType === 'mobile'
-      ? MOBILE_MAIN_LOADSTRING
-      : GET_SCRIPT_TEXT;
+  const script = `loadstring(game:HttpGet("${LOADER_URL}"))()`;
 
   const embed = makeEmbed(
-    scriptType === 'mobile'
-      ? '📱 Jayce Mobile Main'
-      : '🕸️ Jayce Main Script',
-    'Here is your script. Keep it private. ♡'
+    scriptType === "mobile" ? "📱 Jayce Mobile Main" : "🕸️ Jayce Main Script",
+    "Here is your script. Keep it private. ♡"
   );
 
   await user.send({
@@ -239,222 +213,182 @@ async function sendScriptDM(user, scriptType) {
   });
 }
 
-// =============== SLASH COMMANDS ===============
+// ==================== SLASH COMMANDS ====================
 const commands = [
   new SlashCommandBuilder()
-    .setName('panel')
-    .setDescription('Send the Jayce Main customer panel'),
+    .setName("panel")
+    .setDescription("Send the Jayce Main customer panel"),
 
   new SlashCommandBuilder()
-    .setName('adminpanel')
-    .setDescription('View the Jayce Main admin panel'),
+    .setName("adminpanel")
+    .setDescription("View the Jayce Main admin panel"),
 
   new SlashCommandBuilder()
-    .setName('announce')
-    .setDescription('Send an announcement')
-    .addStringOption(o =>
-      o.setName('message')
-        .setDescription('Announcement text')
-        .setRequired(true)
+    .setName("announce")
+    .setDescription("Send an announcement")
+    .addStringOption((o) =>
+      o.setName("message").setDescription("Announcement text").setRequired(true)
     )
-    .addChannelOption(o =>
-      o.setName('channel')
-        .setDescription('Channel to announce in')
-        .setRequired(false)
+    .addChannelOption((o) =>
+      o.setName("channel").setDescription("Channel to announce in")
     ),
 
   new SlashCommandBuilder()
-    .setName('generate-key')
-    .setDescription('Generate a Jayce access code')
-    .addUserOption(o =>
-      o.setName('user')
-        .setDescription('User receiving the code')
-        .setRequired(true)
+    .setName("generate-key")
+    .setDescription("Generate a Jayce access code")
+    .addUserOption((o) =>
+      o.setName("user").setDescription("User receiving the code").setRequired(true)
     ),
 
   new SlashCommandBuilder()
-    .setName('jaycescripts')
-    .setDescription('Send a buyer their Jayce script')
-    .addUserOption(o =>
-      o.setName('user')
-        .setDescription('Buyer receiving the script')
-        .setRequired(true)
+    .setName("jaycescripts")
+    .setDescription("Send a buyer their Jayce script")
+    .addUserOption((o) =>
+      o.setName("user").setDescription("Buyer receiving the script").setRequired(true)
     )
-    .addStringOption(o =>
-      o.setName('script')
-        .setDescription('Choose which script')
+    .addStringOption((o) =>
+      o
+        .setName("script")
+        .setDescription("Choose which script")
         .setRequired(true)
         .addChoices(
-          { name: 'Main', value: 'main' },
-          { name: 'Mobile Main', value: 'mobile' }
+          { name: "Main", value: "main" },
+          { name: "Mobile Main", value: "mobile" }
         )
     ),
 
   new SlashCommandBuilder()
-    .setName('account')
+    .setName("account")
     .setDescription("View a user's Jayce account")
-    .addUserOption(o =>
-      o.setName('user')
-        .setDescription('Account to inspect')
-        .setRequired(true)
+    .addUserOption((o) =>
+      o.setName("user").setDescription("Account to inspect").setRequired(true)
     ),
 
   new SlashCommandBuilder()
-    .setName('disableaccess')
+    .setName("disableaccess")
     .setDescription("Disable a user's Jayce access")
-    .addUserOption(o =>
-      o.setName('user')
-        .setDescription('User to disable')
-        .setRequired(true)
+    .addUserOption((o) =>
+      o.setName("user").setDescription("User to disable").setRequired(true)
     ),
 
   new SlashCommandBuilder()
-    .setName('grantaccess')
-    .setDescription('Grant access to one Jayce script')
-    .addUserOption(o =>
-      o.setName('user')
-        .setDescription('User to grant access')
-        .setRequired(true)
+    .setName("grantaccess")
+    .setDescription("Grant access to a Jayce script")
+    .addUserOption((o) =>
+      o.setName("user").setDescription("User to grant access").setRequired(true)
     )
-    .addStringOption(o =>
-      o.setName('script')
-        .setDescription('Which script did they purchase?')
+    .addStringOption((o) =>
+      o
+        .setName("script")
+        .setDescription("Which script?")
         .setRequired(true)
         .addChoices(
-          { name: 'Main', value: 'main' },
-          { name: 'Mobile Main', value: 'mobile' }
+          { name: "Main", value: "main" },
+          { name: "Mobile Main", value: "mobile" }
         )
     ),
 
   new SlashCommandBuilder()
-    .setName('blacklist')
-    .setDescription('Blacklist a user')
-    .addUserOption(o =>
-      o.setName('user')
-        .setDescription('User to blacklist')
-        .setRequired(true)
+    .setName("blacklist")
+    .setDescription("Blacklist a user")
+    .addUserOption((o) =>
+      o.setName("user").setDescription("User to blacklist").setRequired(true)
     )
-    .addStringOption(o =>
-      o.setName('reason')
-        .setDescription('Reason for the blacklist')
-        .setRequired(false)
+    .addStringOption((o) =>
+      o.setName("reason").setDescription("Reason for blacklist")
     ),
 
   new SlashCommandBuilder()
-    .setName('unblacklist')
+    .setName("unblacklist")
     .setDescription("Remove a user's blacklist")
-    .addUserOption(o =>
-      o.setName('user')
-        .setDescription('User to unblacklist')
-        .setRequired(true)
+    .addUserOption((o) =>
+      o.setName("user").setDescription("User to unblacklist").setRequired(true)
     ),
 
   new SlashCommandBuilder()
-    .setName('ban')
-    .setDescription('Ban a member from this server')
-    .addUserOption(o =>
-      o.setName('user')
-        .setDescription('Member to ban')
-        .setRequired(true)
+    .setName("ban")
+    .setDescription("Ban a member from this server")
+    .addUserOption((o) =>
+      o.setName("user").setDescription("Member to ban").setRequired(true)
     )
-    .addStringOption(o =>
-      o.setName('reason')
-        .setDescription('Reason for the ban')
-        .setRequired(false)
+    .addStringOption((o) =>
+      o.setName("reason").setDescription("Reason for ban")
     ),
 
   new SlashCommandBuilder()
-    .setName('listallaccounts')
-    .setDescription('List registered Jayce accounts'),
+    .setName("listallaccounts")
+    .setDescription("List registered Jayce accounts"),
 
   new SlashCommandBuilder()
-    .setName('lookup')
-    .setDescription('Look up a buyer by Discord ID or Roblox username')
-    .addStringOption(o =>
-      o.setName('query')
-        .setDescription('Discord user ID or Roblox username')
+    .setName("lookup")
+    .setDescription("Look up a buyer")
+    .addStringOption((o) =>
+      o
+        .setName("query")
+        .setDescription("Discord ID or Roblox username")
         .setRequired(true)
     ),
 
   new SlashCommandBuilder()
-    .setName('revoke')
-    .setDescription('Revoke a buyer’s Jayce access')
-    .addUserOption(o =>
-      o.setName('user')
-        .setDescription('Buyer whose access should be revoked')
-        .setRequired(true)
+    .setName("revoke")
+    .setDescription("Revoke a buyer's Jayce access")
+    .addUserOption((o) =>
+      o.setName("user").setDescription("Buyer to revoke").setRequired(true)
     ),
 
   new SlashCommandBuilder()
-    .setName('dmbuyerupdate')
-    .setDescription('DM an update to a buyer')
-    .addUserOption(o =>
-      o.setName('user')
-        .setDescription('Buyer to message')
-        .setRequired(true)
+    .setName("dmbuyerupdate")
+    .setDescription("DM an update to a buyer")
+    .addUserOption((o) =>
+      o.setName("user").setDescription("Buyer to message").setRequired(true)
     )
-    .addStringOption(o =>
-      o.setName('message')
-        .setDescription('Update message to send')
-        .setRequired(true)
+    .addStringOption((o) =>
+      o.setName("message").setDescription("Update message").setRequired(true)
     ),
 
   new SlashCommandBuilder()
-    .setName('forceresethwid')
-    .setDescription('Force-reset a buyer’s saved HWID')
-    .addUserOption(o =>
-      o.setName('user')
-        .setDescription('Buyer whose HWID should be cleared')
-        .setRequired(true)
+    .setName("forceresethwid")
+    .setDescription("Clear a buyer's locally saved HWID")
+    .addUserOption((o) =>
+      o.setName("user").setDescription("Buyer whose HWID should be cleared").setRequired(true)
     ),
-].map(command => command.toJSON());
+].map((command) => command.toJSON());
 
-// =============== REGISTER COMMANDS ===============
+// ==================== REGISTER COMMANDS ====================
 async function registerCommands() {
   if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
     console.error(
-      '[CONFIG] Missing DISCORD_TOKEN, CLIENT_ID, or GUILD_ID.'
+      "[CONFIG] Missing DISCORD_TOKEN, CLIENT_ID, or GUILD_ID environment variables."
     );
     return;
   }
 
-  const rest = new REST({ version: '10' }).setToken(TOKEN);
+  const rest = new REST({ version: "10" }).setToken(TOKEN);
 
-  await rest.put(
-    Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-    { body: commands }
-  );
+  await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), {
+    body: commands,
+  });
 
-  console.log('[COMMANDS] Registered successfully.');
+  console.log("[COMMANDS] Registered successfully.");
 }
 
-client.once('ready', async () => {
-  console.log(`[BOT] Logged in as ${client.user.tag}`);
-
-  try {
-    await registerCommands();
-  } catch (error) {
-    console.error('[COMMANDS] Registration failed:', error);
-  }
-});
-
-// =============== INTERACTIONS ===============
-client.on('interactionCreate', async interaction => {
+// ==================== INTERACTION HANDLER ====================
+client.on("interactionCreate", async (interaction) => {
   try {
     // Customer panel buttons
     if (interaction.isButton()) {
       const userId = interaction.user.id;
 
-      if (interaction.customId === 'jc_register') {
+      if (interaction.customId === "jc_register") {
         const modal = new ModalBuilder()
-          .setCustomId('jc_register_modal')
-          .setTitle('♡ Jayce Registration');
+          .setCustomId("jc_register_modal")
+          .setTitle("♡ Jayce Registration");
 
         const usernameInput = new TextInputBuilder()
-          .setCustomId('roblox_username')
-          .setLabel('Your Roblox username')
+          .setCustomId("roblox_username")
+          .setLabel("Your Roblox username")
           .setStyle(TextInputStyle.Short)
-          .setPlaceholder('Enter your Roblox username')
+          .setPlaceholder("Enter your Roblox username")
           .setRequired(true)
           .setMaxLength(32);
 
@@ -465,63 +399,44 @@ client.on('interactionCreate', async interaction => {
         return interaction.showModal(modal);
       }
 
-      if (interaction.customId === 'jc_stats') {
-        const totalAccounts = Object.keys(db.accounts).length;
-        const totalKeys = Object.keys(db.keys).length;
-
-        const redeemedKeys = Object.values(db.keys)
-          .filter(entry => entry && entry.redeemed).length;
-
-        const disabledAccess = Object.values(db.access)
-          .filter(value => value === false).length;
-
-        const blacklistedCount =
-          Object.keys(db.blacklisted).length;
-
-        const statsEmbed = makeEmbed(
-          '🔮 ୨୧ JAYCE SPOOKY STATS ୨୧',
-          [
-            '╭・🎃・・・・・・・🎃・╮',
-            '',
-            `👻 **Registered Accounts:** ${totalAccounts}`,
-            `🗝️ **Access Codes Created:** ${totalKeys}`,
-            `✨ **Redeemed Codes:** ${redeemedKeys}`,
-            `🔒 **Disabled Access Records:** ${disabledAccess}`,
-            `🖤 **Blacklisted Accounts:** ${blacklistedCount}`,
-            '',
-            '╰・🦇・・・・・・・🦇・╯',
-            '*Stats are based on the bot database.*',
-          ].join('\n')
-        );
-
+      if (interaction.customId === "jc_stats") {
         return interaction.reply({
-          embeds: [statsEmbed],
+          embeds: [
+            makeEmbed(
+              "🔮 Jayce Stats",
+              [
+                `**Registered accounts:** ${Object.keys(db.accounts).length}`,
+                `**Keys created:** ${Object.keys(db.keys).length}`,
+                `**Blacklisted accounts:** ${Object.keys(db.blacklisted).length}`,
+                `**Disabled access records:** ${
+                  Object.values(db.access).filter((value) => value === false).length
+                }`,
+              ].join("\n")
+            ),
+          ],
           ephemeral: true,
         });
       }
 
       if (isBlacklisted(userId)) {
         return replyWithHeart(interaction, {
-          content: '⛔ Your account is blacklisted.',
+          content: "⛔ Your account is blacklisted.",
           ephemeral: true,
         });
       }
 
       if (!accessEnabled(userId)) {
         return replyWithHeart(interaction, {
-          content: '🔒 Your Jayce access is disabled. Contact staff.',
+          content: "🔒 Your Jayce access is disabled. Contact staff.",
           ephemeral: true,
         });
       }
 
       if (
-        interaction.customId === 'jc_key' ||
-        interaction.customId === 'jc_mobilemain'
+        interaction.customId === "jc_key" ||
+        interaction.customId === "jc_mobilemain"
       ) {
-        const member = await getGuildMember(
-          interaction.guild,
-          userId
-        );
+        const member = await getGuildMember(interaction.guild, userId);
 
         if (!member) {
           return replyWithHeart(interaction, {
@@ -530,12 +445,8 @@ client.on('interactionCreate', async interaction => {
           });
         }
 
-        const mobile =
-          interaction.customId === 'jc_mobilemain';
-
-        const requiredRole = mobile
-          ? MOBILE_MAIN_ROLE_ID
-          : MAIN_ROLE_ID;
+        const mobile = interaction.customId === "jc_mobilemain";
+        const requiredRole = mobile ? MOBILE_MAIN_ROLE_ID : MAIN_ROLE_ID;
 
         if (!member.roles.cache.has(requiredRole)) {
           return replyWithHeart(interaction, {
@@ -547,15 +458,12 @@ client.on('interactionCreate', async interaction => {
         }
 
         try {
-          await sendScriptDM(
-            interaction.user,
-            mobile ? 'mobile' : 'main'
-          );
+          await sendScriptDM(interaction.user, mobile ? "mobile" : "main");
 
           return replyWithHeart(interaction, {
             content: mobile
-              ? '📱 Mobile Main was sent to your DMs.'
-              : '💗 Jayce Main was sent to your DMs.',
+              ? "📱 Mobile Main was sent to your DMs."
+              : "💗 Jayce Main was sent to your DMs.",
             ephemeral: true,
           });
         } catch {
@@ -572,15 +480,15 @@ client.on('interactionCreate', async interaction => {
     // Registration modal
     if (
       interaction.isModalSubmit() &&
-      interaction.customId === 'jc_register_modal'
+      interaction.customId === "jc_register_modal"
     ) {
       const username = interaction.fields
-        .getTextInputValue('roblox_username')
+        .getTextInputValue("roblox_username")
         .trim();
 
       if (!username) {
         return replyWithHeart(interaction, {
-          content: 'Please enter a valid username.',
+          content: "Please enter a valid username.",
           ephemeral: true,
         });
       }
@@ -596,7 +504,7 @@ client.on('interactionCreate', async interaction => {
       return replyWithHeart(interaction, {
         embeds: [
           makeEmbed(
-            '♡ Registration Complete',
+            "♡ Registration Complete",
             `**Roblox username:** ${username}\n**Discord:** ${interaction.user.tag}`
           ),
         ],
@@ -608,56 +516,49 @@ client.on('interactionCreate', async interaction => {
 
     if (!isStaff(interaction.member)) {
       return replyWithHeart(interaction, {
-        content: '⛔ You do not have permission to use this command.',
+        content: "⛔ You do not have permission to use this command.",
         ephemeral: true,
       });
     }
 
     const commandName = interaction.commandName;
 
-    // /panel
-    if (commandName === 'panel') {
+    // Send customer panel
+    if (commandName === "panel") {
       const embed = makeEmbed(
-        '🎃 ୨୧ JAYCE MAIN ୨୧ 🦇',
+        "🎃 JAYCE MAIN 🦇",
         [
-          '╭・♡・・・・・・・♡・╮',
-          '',
-          '**Welcome to Jayce Main!**',
-          'A little spooky, a little cute. 🎀',
-          '',
-          '🎀 **Register** — link your Roblox username',
-          '🕸️ **Get Script** — receive your Main script',
-          '📱 **Mobile Main** — get the mobile script',
-          '🔮 **Get Stats** — view database statistics',
-          '',
-          '*Choose an option below, boo! ♡*',
-          '╰・🎃・・・・・・・🎃・╯',
-        ].join('\n')
+          "**Welcome to Jayce Main!**",
+          "",
+          "🎀 **Register** — link your Roblox username",
+          "🕸️ **Get Script** — receive your Main script",
+          "📱 **Mobile Main** — receive the mobile loader",
+          "🔮 **Get Stats** — view public statistics",
+          "",
+          "*Choose an option below, boo! ♡*",
+        ].join("\n")
       );
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId('jc_register')
-          .setLabel('Register')
-          .setEmoji('🎀')
+          .setCustomId("jc_register")
+          .setLabel("Register")
+          .setEmoji("🎀")
           .setStyle(ButtonStyle.Primary),
-
         new ButtonBuilder()
-          .setCustomId('jc_key')
-          .setLabel('Get Script')
-          .setEmoji('🕸️')
+          .setCustomId("jc_key")
+          .setLabel("Get Script")
+          .setEmoji("🕸️")
           .setStyle(ButtonStyle.Secondary),
-
         new ButtonBuilder()
-          .setCustomId('jc_mobilemain')
-          .setLabel('Mobile Main')
-          .setEmoji('📱')
+          .setCustomId("jc_mobilemain")
+          .setLabel("Mobile Main")
+          .setEmoji("📱")
           .setStyle(ButtonStyle.Success),
-
         new ButtonBuilder()
-          .setCustomId('jc_stats')
-          .setLabel('Get Stats')
-          .setEmoji('🔮')
+          .setCustomId("jc_stats")
+          .setLabel("Get Stats")
+          .setEmoji("🔮")
           .setStyle(ButtonStyle.Primary)
       );
 
@@ -667,36 +568,32 @@ client.on('interactionCreate', async interaction => {
       });
     }
 
-    // /adminpanel
-    if (commandName === 'adminpanel') {
+    // Admin panel
+    if (commandName === "adminpanel") {
       const embed = makeEmbed(
-        '♡ Jayce Main Admin Panel',
+        "♡ Jayce Main Admin Panel",
         [
-          '**Account Management**',
-          '`/account` — inspect an account',
-          '`/grantaccess` — grant access',
-          '`/disableaccess` — disable access',
-          '`/generate-key` — create an access code',
-          '',
-          '**Script Delivery**',
-          '`/jaycescripts` — send Main or Mobile Main',
-          '`/panel` — post the customer panel',
-          '',
-          '**Moderation**',
-          '`/blacklist` — blacklist a user',
-          '`/unblacklist` — remove a blacklist',
-          '`/ban` — ban a member',
-          '`/revoke` — revoke buyer access',
-          '',
-          '**Buyer Tools**',
-          '`/lookup` — search buyer details',
-          '`/dmbuyerupdate` — DM a buyer update',
-          '`/forceresethwid` — clear a buyer HWID',
-          '',
-          '**Other**',
-          '`/announce` — send an announcement',
-          '`/listallaccounts` — list registrations',
-        ].join('\n')
+          "**Account Management**",
+          "`/account` — inspect an account",
+          "`/grantaccess` — grant access",
+          "`/disableaccess` — disable access",
+          "`/generate-key` — generate a key",
+          "",
+          "**Scripts**",
+          "`/jaycescripts` — send a script",
+          "`/panel` — post the customer panel",
+          "",
+          "**Moderation**",
+          "`/blacklist` — blacklist a user",
+          "`/unblacklist` — remove a blacklist",
+          "`/ban` — ban a member",
+          "`/revoke` — revoke access",
+          "",
+          "**Buyer tools**",
+          "`/lookup` — search buyer details",
+          "`/dmbuyerupdate` — DM an update",
+          "`/forceresethwid` — clear locally saved HWID",
+        ].join("\n")
       );
 
       return replyWithHeart(interaction, {
@@ -705,28 +602,21 @@ client.on('interactionCreate', async interaction => {
       });
     }
 
-    // /announce
-    if (commandName === 'announce') {
-      const message = interaction.options.getString(
-        'message',
-        true
-      );
-
+    // Announcements
+    if (commandName === "announce") {
+      const message = interaction.options.getString("message", true);
       const channel =
-        interaction.options.getChannel('channel') ||
-        interaction.channel;
+        interaction.options.getChannel("channel") || interaction.channel;
 
       if (!channel?.isTextBased() || !channel.send) {
         return replyWithHeart(interaction, {
-          content: 'Please select a text channel.',
+          content: "Please select a text channel.",
           ephemeral: true,
         });
       }
 
       await channel.send({
-        embeds: [
-          makeEmbed('♡ Jayce Main Announcement', message),
-        ],
+        embeds: [makeEmbed("♡ Jayce Main Announcement", message)],
       });
 
       return replyWithHeart(interaction, {
@@ -735,10 +625,9 @@ client.on('interactionCreate', async interaction => {
       });
     }
 
-    // /generate-key
-    if (commandName === 'generate-key') {
-      const user = interaction.options.getUser('user', true);
-
+    // Generate access key
+    if (commandName === "generate-key") {
+      const user = interaction.options.getUser("user", true);
       let code;
 
       do {
@@ -757,7 +646,7 @@ client.on('interactionCreate', async interaction => {
         await user.send({
           embeds: [
             makeEmbed(
-              '♡ Your Jayce Access Code',
+              "♡ Your Jayce Access Code",
               `Your access code is:\n\n\`${code}\`\n\nKeep it private.`
             ),
           ],
@@ -769,13 +658,68 @@ client.on('interactionCreate', async interaction => {
         });
       } catch {
         return replyWithHeart(interaction, {
-          content: `Code generated, but I couldn't DM ${user}.\nCode: \`${code}\``,
+          content: `I couldn't DM ${user}. Their code is:\n\`${code}\``,
           ephemeral: true,
         });
       }
     }
 
-    // /jaycescripts
-    if (commandName === 'jaycescripts') {
-      const user = interaction.options.getUser('user', true);
-      const scriptType = interaction.options.getString
+    // Send script to buyer
+    if (commandName === "jaycescripts") {
+      const user = interaction.options.getUser("user", true);
+      const scriptType = interaction.options.getString("script", true);
+
+      if (isBlacklisted(user.id)) {
+        return replyWithHeart(interaction, {
+          content: "⛔ That user is blacklisted.",
+          ephemeral: true,
+        });
+      }
+
+      if (!accessEnabled(user.id)) {
+        return replyWithHeart(interaction, {
+          content: "🔒 That user's Jayce access is disabled.",
+          ephemeral: true,
+        });
+      }
+
+      const member = await getGuildMember(interaction.guild, user.id);
+
+      if (!member) {
+        return replyWithHeart(interaction, {
+          content: "That user isn't a member of this server.",
+          ephemeral: true,
+        });
+      }
+
+      const requiredRole =
+        scriptType === "mobile" ? MOBILE_MAIN_ROLE_ID : MAIN_ROLE_ID;
+
+      if (!member.roles.cache.has(requiredRole)) {
+        return replyWithHeart(interaction, {
+          content: "That user doesn't have the required script role.",
+          ephemeral: true,
+        });
+      }
+
+      try {
+        await sendScriptDM(user, scriptType);
+
+        return replyWithHeart(interaction, {
+          content: `♡ Sent the ${
+            scriptType === "mobile" ? "Mobile Main" : "Main"
+          } script to ${user}.`,
+          ephemeral: true,
+        });
+      } catch {
+        return replyWithHeart(interaction, {
+          content: `I couldn't DM ${user}. They may need to enable server DMs.`,
+          ephemeral: true,
+        });
+      }
+    }
+
+    // Account details
+    if (commandName === "account") {
+      const user = interaction.options.getUser("user", true);
+      const account = db.accou
