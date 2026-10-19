@@ -8,6 +8,8 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
 } = require("discord.js");
 
 const { REST } = require("@discordjs/rest");
@@ -26,7 +28,7 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || "1552637829815865414";
-const TICKET_CHANNEL_ID = process.env.TICKET_CHANNEL_ID || "YOUR_TICKET_CHANNEL_ID";
+const TICKET_CHANNEL_ID = process.env.TICKET_CHANNEL_ID || "1556208545278595142";
 const PANEL_COLOR = 0xff7518;
 const TICKET_COLOR = 0x5865f2;
 
@@ -37,12 +39,10 @@ const DB_FILE = path.join(DATA_DIR, "database.json");
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMITS = new Map();
 
-// ==================== DISCORD CLIENT ====================
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
 });
 
-// ==================== EXPRESS SERVER ====================
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(cors());
@@ -55,6 +55,44 @@ let db = {
   access: {},
   logs: [],
 };
+
+function appendLog(action, details = {}) {
+  db.logs.push({
+    timestamp: new Date().toISOString(),
+    action,
+    ...details,
+  });
+
+  if (db.logs.length > 2000) {
+    db.logs = db.logs.slice(-2000);
+  }
+
+  saveDatabase();
+}
+
+function isRateLimited(userId, action, limitMs = RATE_LIMIT_WINDOW_MS, maxCalls = 3) {
+  const key = `${userId}:${action}`;
+  const now = Date.now();
+  const entries = RATE_LIMITS.get(key) || [];
+  const current = entries.filter((ts) => now - ts < limitMs);
+
+  if (current.length >= maxCalls) {
+    RATE_LIMITS.set(key, current);
+    return true;
+  }
+
+  current.push(now);
+  RATE_LIMITS.set(key, current);
+  return false;
+}
+
+function isValidUsername(username) {
+  return typeof username === "string" && /^[A-Za-z0-9_]{3,20}$/.test(username.trim());
+}
+
+function isValidPassword(password) {
+  return typeof password === "string" && password.trim().length >= 6;
+}
 
 function saveDatabase() {
   try {
@@ -90,266 +128,6 @@ function loadDatabase() {
   }
 }
 
-function appendLog(action, details = {}) {
-  db.logs.push({
-    timestamp: new Date().toISOString(),
-    action,
-    ...details,
-  });
-
-  if (db.logs.length > 2000) {
-    db.logs = db.logs.slice(-2000);
-  }
-
-  saveDatabase();
-}
-
-function isRateLimited(userId, action, limitMs = RATE_LIMIT_WINDOW_MS, maxCalls = 3) {
-  const key = `${userId}:${action}`;
-  const now = Date.now();
-  const entries = RATE_LIMITS.get(key) || [];
-  const current = entries.filter((ts) => now - ts < limitMs);
-
-  if (current.length >= maxCalls) {
-    RATE_LIMITS.set(key, current);
-    return true;
-  }
-
-  current.push(now);
-  RATE_LIMITS.set(key, current);
-  return false;
-}
-
-function makeEmbed(title, description) {
-  return new EmbedBuilder()
-    .setColor(PANEL_COLOR)
-    .setTitle(title)
-    .setDescription(description)
-    .setFooter({ text: "🎃 jayce ♡ spooky & secure 🦇" })
-    .setTimestamp();
-}
-
-function replyWithHeart(interaction, options) {
-  if (
-    typeof options.content === "string" &&
-    !options.content.trimStart().startsWith("♡")
-  ) {
-    options.content = `♡ ${options.content}`;
-  }
-
-  if (Array.isArray(options.embeds)) {
-    options.embeds = options.embeds.map((embed) => {
-      const title = embed.data?.title;
-      if (typeof title === "string" && !title.trimStart().startsWith("♡")) {
-        embed.setTitle(`♡ ${title}`);
-      }
-      return embed;
-    });
-  }
-
-  return interaction.reply(options);
-}
-
-function makeCode(length = 24) {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let result = "";
-
-  for (let i = 0; i < length; i++) {
-    result += chars[Math.floor(Math.random() * chars.length)];
-  }
-
-  return result;
-}
-
-function makeKey() {
-  let key;
-  do {
-    key = `JAYCE-${makeCode(20)}`;
-  } while (db.keys[key]);
-  return key;
-}
-
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return { salt, hash };
-}
-
-function verifyPassword(stored, password) {
-  if (!stored || !stored.salt || !stored.hash) return false;
-  const hash = crypto.scryptSync(password, stored.salt, 64).toString("hex");
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(hash, "hex"),
-      Buffer.from(stored.hash, "hex")
-    );
-  } catch (e) {
-    return false;
-  }
-}
-
-function createBasicTicketPanel() {
-  return {
-    embeds: [
-      new EmbedBuilder()
-        .setColor(PANEL_COLOR)
-        .setTitle("🎫 Jayce Support")
-        .setDescription(
-          "Select a category below to open a ticket.\n\n" +
-            "Your request will be sent to the support ticket channel."
-        )
-        .addFields({
-          name: "Options",
-          value: "Support • Purchase • Script • Help • Bugs",
-        })
-        .setTimestamp(),
-    ],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("ticket_support")
-          .setLabel("Support")
-          .setStyle(ButtonStyle.Primary),
-
-        new ButtonBuilder()
-          .setCustomId("ticket_purchase")
-          .setLabel("Purchase")
-          .setStyle(ButtonStyle.Success),
-
-        new ButtonBuilder()
-          .setCustomId("ticket_script")
-          .setLabel("Script")
-          .setStyle(ButtonStyle.Secondary)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("ticket_help")
-          .setLabel("Help")
-          .setStyle(ButtonStyle.Secondary),
-
-        new ButtonBuilder()
-          .setCustomId("ticket_bugs")
-          .setLabel("Bugs")
-          .setStyle(ButtonStyle.Danger)
-      ),
-    ],
-  };
-}
-
-async function openTicket(interaction, ticketType) {
-  const guild = interaction.guild;
-  if (!guild) {
-    return interaction.reply({
-      content: "This ticket system only works in a server.",
-      ephemeral: true,
-    });
-  }
-
-  const ticketChannel =
-    guild.channels.cache.get(TICKET_CHANNEL_ID) ||
-    (await guild.channels.fetch(TICKET_CHANNEL_ID).catch(() => null));
-
-  if (!ticketChannel) {
-    return interaction.reply({
-      content:
-        "Ticket channel is not set or not found. Please configure `TICKET_CHANNEL_ID`.",
-      ephemeral: true,
-    });
-  }
-
-  const labelMap = {
-    support: "Support",
-    purchase: "Purchase",
-    script: "Script",
-    help: "Help",
-    bugs: "Bugs",
-  };
-
-  const ticketLabel = labelMap[ticketType] || "Support";
-
-  const ticketEmbed = new EmbedBuilder()
-    .setColor(TICKET_COLOR)
-    .setTitle(`🎫 New ${ticketLabel} Ticket`)
-    .setDescription(
-      `**User:** ${interaction.user.tag}\n` +
-        `**Discord ID:** ${interaction.user.id}\n` +
-        `**Type:** ${ticketLabel}\n` +
-        `**Created:** <t:${Math.floor(Date.now() / 1000)}:F>`
-    )
-    .addFields({
-      name: "Next step",
-      value: "A staff member will respond here shortly.",
-    })
-    .setTimestamp();
-
-  const ticketMessage = await ticketChannel.send({
-    content: `<@&${STAFF_ROLE_ID}> New ${ticketLabel.toLowerCase()} ticket`,
-    embeds: [ticketEmbed],
-  });
-
-  await interaction.reply({
-    content: `✅ Your ${ticketLabel.toLowerCase()} ticket was created in <#${TICKET_CHANNEL_ID}>.`,
-    ephemeral: true,
-  });
-
-  try {
-    await interaction.user
-      .send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(TICKET_COLOR)
-            .setTitle("🎫 Ticket Created")
-            .setDescription(
-              `Your ${ticketLabel.toLowerCase()} ticket was submitted successfully.\n\n` +
-                `Ticket channel: <#${TICKET_CHANNEL_ID}>\n` +
-                `Reference: ${ticketMessage.id}`
-            )
-            .setTimestamp(),
-        ],
-      })
-      .catch(() => {});
-  } catch (err) {}
-}
-
-// ==================== COMMANDS ====================
-const commands = [
-  new SlashCommandBuilder()
-    .setName("panel")
-    .setDescription("Send the Jayce Main customer panel"),
-
-  new SlashCommandBuilder()
-    .setName("adminpanel")
-    .setDescription("View the Jayce Main admin panel"),
-
-  new SlashCommandBuilder()
-    .setName("announce")
-    .setDescription("Send an announcement")
-    .addStringOption((o) =>
-      o.setName("message").setDescription("Announcement text").setRequired(true)
-    )
-    .addChannelOption((o) =>
-      o.setName("channel").setDescription("Channel to announce in")
-    ),
-].map((command) => command.toJSON());
-
-async function registerCommands() {
-  if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
-    console.error(
-      "[CONFIG] Missing DISCORD_TOKEN, CLIENT_ID, or GUILD_ID environment variables."
-    );
-    return;
-  }
-
-  const rest = new REST({ version: "10" }).setToken(TOKEN);
-
-  await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), {
-    body: commands,
-  });
-
-  console.log("[COMMANDS] Registered successfully.");
-}
-
-// ==================== HTTP ENDPOINTS ====================
 app.get("/", (_req, res) => {
   res.status(200).send("🎃 Jayce Main is running! 🦇");
 });
@@ -384,6 +162,36 @@ app.get("/keys/:key", (req, res) => {
     createdAt: entry.createdAt || null,
     redeemedAt: entry.redeemedAt || null,
   });
+});
+
+app.post("/keys/:key/reset-hwid", (req, res) => {
+  const key = req.params.key;
+  const { userId, staffId } = req.body || {};
+  const entry = db.keys[key];
+
+  if (!entry) {
+    return res.status(404).json({ ok: false, error: "Key not found." });
+  }
+
+  if (userId && entry.userId !== String(userId)) {
+    return res.status(403).json({
+      ok: false,
+      error: "Key does not belong to the submitted userId.",
+    });
+  }
+
+  delete entry.hwid;
+  entry.redeemed = false;
+  entry.revoked = false;
+
+  appendLog("hwid_reset", {
+    key,
+    userId: entry.userId,
+    staffId: staffId || null,
+  });
+
+  saveDatabase();
+  return res.status(200).json({ ok: true, message: "HWID reset for key." });
 });
 
 app.post("/redeem", (req, res) => {
@@ -520,9 +328,270 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`[WEB] Listening on port ${PORT}`);
 });
 
-loadDatabase();
+function makeEmbed(title, description) {
+  return new EmbedBuilder()
+    .setColor(PANEL_COLOR)
+    .setTitle(title)
+    .setDescription(description)
+    .setFooter({ text: "🎃 jayce ♡ spooky & secure 🦇" })
+    .setTimestamp();
+}
 
-// ==================== EVENT HANDLERS ====================
+function replyWithHeart(interaction, options) {
+  if (
+    typeof options.content === "string" &&
+    !options.content.trimStart().startsWith("♡")
+  ) {
+    options.content = `♡ ${options.content}`;
+  }
+
+  if (Array.isArray(options.embeds)) {
+    options.embeds = options.embeds.map((embed) => {
+      const title = embed.data?.title;
+      if (typeof title === "string" && !title.trimStart().startsWith("♡")) {
+        embed.setTitle(`♡ ${title}`);
+      }
+      return embed;
+    });
+  }
+
+  return interaction.reply(options);
+}
+
+function makeCode(length = 24) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let result = "";
+
+  for (let i = 0; i < length; i++) {
+    result += chars[Math.floor(Math.random() * chars.length)];
+  }
+
+  return result;
+}
+
+function makeKey() {
+  let key;
+  do {
+    key = `JAYCE-${makeCode(20)}`;
+  } while (db.keys[key]);
+  return key;
+}
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return { salt, hash };
+}
+
+function verifyPassword(stored, password) {
+  if (!stored || !stored.salt || !stored.hash) return false;
+  const hash = crypto.scryptSync(password, stored.salt, 64).toString("hex");
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(hash, "hex"),
+      Buffer.from(stored.hash, "hex")
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+function createBasicTicketPanel() {
+  return {
+    embeds: [
+      new EmbedBuilder()
+        .setColor(PANEL_COLOR)
+        .setTitle("jayce.EXE Tickets")
+        .setDescription("Choose a reason...")
+        .setTimestamp(),
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("ticket_select")
+          .setPlaceholder("Choose a reason...")
+          .addOptions(
+            new StringSelectMenuOptionBuilder()
+              .setLabel("support")
+              .setValue("support")
+              .setDescription("Open a ticket for support"),
+            new StringSelectMenuOptionBuilder()
+              .setLabel("purchase")
+              .setValue("purchase")
+              .setDescription("Open a ticket for purchase"),
+            new StringSelectMenuOptionBuilder()
+              .setLabel("script")
+              .setValue("script")
+              .setDescription("Open a ticket for script"),
+            new StringSelectMenuOptionBuilder()
+              .setLabel("help")
+              .setValue("help")
+              .setDescription("Open a ticket for help"),
+            new StringSelectMenuOptionBuilder()
+              .setLabel("bugs")
+              .setValue("bugs")
+              .setDescription("Open a ticket for bugs")
+          )
+      ),
+    ],
+  };
+}
+
+async function openTicket(interaction, ticketType) {
+  const guild = interaction.guild;
+  if (!guild) {
+    return interaction.reply({
+      content: "This ticket system only works in a server.",
+      ephemeral: true,
+    });
+  }
+
+  const ticketChannel =
+    guild.channels.cache.get(TICKET_CHANNEL_ID) ||
+    (await guild.channels.fetch(TICKET_CHANNEL_ID).catch(() => null));
+
+  if (!ticketChannel) {
+    return interaction.reply({
+      content: "Ticket channel is not set or not found. Please configure `TICKET_CHANNEL_ID`.",
+      ephemeral: true,
+    });
+  }
+
+  const labelMap = {
+    support: "Support",
+    purchase: "Purchase",
+    script: "Script",
+    help: "Help",
+    bugs: "Bugs",
+  };
+
+  const ticketLabel = labelMap[ticketType] || "Support";
+
+  const ticketEmbed = new EmbedBuilder()
+    .setColor(TICKET_COLOR)
+    .setTitle(`🎫 New ${ticketLabel} Ticket`)
+    .setDescription(
+      `**User:** ${interaction.user.tag}\n` +
+        `**Discord ID:** ${interaction.user.id}\n` +
+        `**Type:** ${ticketLabel}\n` +
+        `**Created:** <t:${Math.floor(Date.now() / 1000)}:F>`
+    )
+    .addFields({
+      name: "Next step",
+      value: "A staff member will respond here shortly.",
+    })
+    .setTimestamp();
+
+  const ticketMessage = await ticketChannel.send({
+    content: `<@&${STAFF_ROLE_ID}> New ${ticketLabel.toLowerCase()} ticket`,
+    embeds: [ticketEmbed],
+  });
+
+  await interaction.reply({
+    content: `✅ Your ${ticketLabel.toLowerCase()} ticket was created in <#${TICKET_CHANNEL_ID}>.`,
+    ephemeral: true,
+  });
+
+  try {
+    await interaction.user
+      .send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(TICKET_COLOR)
+            .setTitle("🎫 Ticket Created")
+            .setDescription(
+              `Your ${ticketLabel.toLowerCase()} ticket was submitted successfully.\n\n` +
+                `Ticket channel: <#${TICKET_CHANNEL_ID}>\n` +
+                `Reference: ${ticketMessage.id}`
+            )
+            .setTimestamp(),
+        ],
+      })
+      .catch(() => {});
+  } catch (err) {}
+}
+
+const commands = [
+  new SlashCommandBuilder().setName("panel").setDescription("Send the Jayce Main customer panel"),
+  new SlashCommandBuilder().setName("ticketpanel").setDescription("Open the jayce.EXE ticket panel"),
+  new SlashCommandBuilder().setName("adminpanel").setDescription("View the Jayce Main admin panel"),
+  new SlashCommandBuilder().setName("announce").setDescription("Send an announcement").addStringOption((o) =>
+    o.setName("message").setDescription("Announcement text").setRequired(true)
+  ).addChannelOption((o) =>
+    o.setName("channel").setDescription("Channel to announce in")
+  ),
+  new SlashCommandBuilder().setName("generate-key").setDescription("Generate a Jayce access code").addUserOption((o) =>
+    o.setName("user").setDescription("User receiving the code").setRequired(true)
+  ),
+  new SlashCommandBuilder().setName("resetpassword").setDescription("Reset a buyer's account password").addUserOption((o) =>
+    o.setName("user").setDescription("Account owner").setRequired(true)
+  ).addStringOption((o) =>
+    o.setName("password").setDescription("New password").setRequired(true).setMinLength(6).setMaxLength(128)
+  ),
+  new SlashCommandBuilder().setName("exportlogs").setDescription("Show recent Jayce activity logs"),
+  new SlashCommandBuilder().setName("jaycescripts").setDescription("Send a buyer their Jayce script").addUserOption((o) =>
+    o.setName("user").setDescription("Buyer receiving the script").setRequired(true)
+  ).addStringOption((o) =>
+    o.setName("script").setDescription("Choose which script").setRequired(true).addChoices(
+      { name: "Main", value: "main" },
+      { name: "Mobile Main", value: "mobile" }
+    )
+  ),
+  new SlashCommandBuilder().setName("account").setDescription("View a user's Jayce account").addUserOption((o) =>
+    o.setName("user").setDescription("Account to inspect").setRequired(true)
+  ),
+  new SlashCommandBuilder().setName("disableaccess").setDescription("Disable a user's Jayce access").addUserOption((o) =>
+    o.setName("user").setDescription("User to disable").setRequired(true)
+  ),
+  new SlashCommandBuilder().setName("grantaccess").setDescription("Grant access to a Jayce script").addUserOption((o) =>
+    o.setName("user").setDescription("User to grant access").setRequired(true)
+  ).addStringOption((o) =>
+    o.setName("script").setDescription("Which script?").setRequired(true).addChoices(
+      { name: "Main", value: "main" },
+      { name: "Mobile Main", value: "mobile" }
+    )
+  ),
+  new SlashCommandBuilder().setName("blacklist").setDescription("Blacklist a user").addUserOption((o) =>
+    o.setName("user").setDescription("User to blacklist").setRequired(true)
+  ).addStringOption((o) =>
+    o.setName("reason").setDescription("Reason for blacklist")
+  ),
+  new SlashCommandBuilder().setName("unblacklist").setDescription("Remove a user's blacklist").addUserOption((o) =>
+    o.setName("user").setDescription("User to unblacklist").setRequired(true)
+  ),
+  new SlashCommandBuilder().setName("ban").setDescription("Ban a member from this server").addUserOption((o) =>
+    o.setName("user").setDescription("Member to ban").setRequired(true)
+  ).addStringOption((o) =>
+    o.setName("reason").setDescription("Reason for ban")
+  ),
+  new SlashCommandBuilder().setName("listallaccounts").setDescription("List registered Jayce accounts"),
+  new SlashCommandBuilder().setName("lookup").setDescription("Look up a buyer").addStringOption((o) =>
+    o.setName("query").setDescription("Discord ID or Roblox username").setRequired(true)
+  ),
+  new SlashCommandBuilder().setName("revoke").setDescription("Revoke a buyer's Jayce access").addUserOption((o) =>
+    o.setName("user").setDescription("Buyer to revoke").setRequired(true)
+  ),
+  new SlashCommandBuilder().setName("dmbuyerupdate").setDescription("DM an update to a buyer").addUserOption((o) =>
+    o.setName("user").setDescription("Buyer to message").setRequired(true)
+  ).addStringOption((o) =>
+    o.setName("message").setDescription("Update message").setRequired(true)
+  ),
+  new SlashCommandBuilder().setName("forceresethwid").setDescription("Clear a buyer's locally saved HWID").addUserOption((o) =>
+    o.setName("user").setDescription("Buyer whose HWID should be cleared").setRequired(true)
+  ),
+].map((command) => command.toJSON());
+
+async function registerCommands() {
+  if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
+    console.error("[CONFIG] Missing DISCORD_TOKEN, CLIENT_ID, or GUILD_ID environment variables.");
+    return;
+  }
+
+  const rest = new REST({ version: "10" }).setToken(TOKEN);
+  await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+  console.log("[COMMANDS] Registered successfully.");
+}
+
 client.on("ready", async () => {
   console.log(`[BOT] Logged in as ${client.user.tag}`);
   await registerCommands();
@@ -535,13 +604,16 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply(createBasicTicketPanel());
       }
 
+      if (interaction.commandName === "ticketpanel") {
+        return interaction.reply(createBasicTicketPanel());
+      }
+
       if (interaction.commandName === "adminpanel") {
         return interaction.reply({
           embeds: [
             makeEmbed(
               "🛠️ Admin Panel",
-              "Staff tools are available in the admin dashboard.\n\n" +
-                "Ticket queue is managed in the configured ticket channel."
+              "Staff tools are available in the admin dashboard.\n\nTicket queue is managed in the configured ticket channel."
             ),
           ],
           ephemeral: true,
@@ -572,6 +644,11 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
+    if (interaction.isStringSelectMenu() && interaction.customId === "ticket_select") {
+      const selected = interaction.values[0];
+      return openTicket(interaction, selected);
+    }
+
     if (interaction.isButton()) {
       const ticketMap = {
         ticket_support: "support",
@@ -593,9 +670,7 @@ client.on("interactionCreate", async (interaction) => {
           });
         }
 
-        const modal = new ModalBuilder()
-          .setCustomId("jc_register_modal")
-          .setTitle("♡ Jayce Registration");
+        const modal = new ModalBuilder().setCustomId("jc_register_modal").setTitle("♡ Jayce Registration");
 
         const usernameInput = new TextInputBuilder()
           .setCustomId("roblox_username")
@@ -728,5 +803,7 @@ if (!TOKEN) {
 } else {
   client.login(TOKEN);
 }
+
+loadDatabase();
 
 module.exports = { createBasicTicketPanel, openTicket };
