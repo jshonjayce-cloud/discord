@@ -247,7 +247,7 @@ scriptType === 'mobile'
 
 await user.send({
 embeds: [embed],
-content: \``lua\n${script}\n````,
+content: `\`\`\`lua\n${script}\n\`\`\``,
 });
 }
 
