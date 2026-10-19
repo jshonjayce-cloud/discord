@@ -8,8 +8,6 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  StringSelectMenuBuilder,
-  StringSelectMenuOptionBuilder,
 } = require("discord.js");
 
 const { REST } = require("@discordjs/rest");
@@ -29,8 +27,7 @@ const GUILD_ID = process.env.GUILD_ID;
 
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || "1552637829815865414";
 const MAIN_ROLE_ID = "1552637429456961657";
-const MOBILE_MAIN_ROLE_ID = process.env.MOBILE_MAIN_ROLE_ID || "1554321313332469800";
-const TICKET_CHANNEL_ID = process.env.TICKET_CHANNEL_ID || "1556208545278595142";
+const MOBILE_MAIN_ROLE_ID = "1554321313332469800";
 
 const LOADER_URL =
   "https://flowauth.net/v1/loaders/a98aeecca217266364e1eb0396c7a283.lua";
@@ -39,7 +36,6 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DB_FILE = path.join(DATA_DIR, "database.json");
 const PANEL_COLOR = 0xff7518;
-const TICKET_COLOR = 0x5865f2;
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMITS = new Map();
@@ -401,6 +397,10 @@ function verifyPassword(stored, password) {
   }
 }
 
+function hasRole(member, roleId) {
+  return Boolean(member?.roles?.cache?.has(roleId));
+}
+
 async function setScriptRoles(member, enabled, scriptType = "both") {
   const roleIds = [];
 
@@ -470,107 +470,8 @@ function createLegacyPanel() {
   };
 }
 
-function createTicketPanel() {
-  return {
-    embeds: [
-      new EmbedBuilder()
-        .setColor(PANEL_COLOR)
-        .setTitle("jayce.EXE Tickets")
-        .setDescription("Choose a reason...")
-        .setTimestamp(),
-    ],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId("ticket_select")
-          .setPlaceholder("Choose a reason...")
-          .addOptions(
-            new StringSelectMenuOptionBuilder().setLabel("support").setValue("support").setDescription("Open a ticket for support"),
-            new StringSelectMenuOptionBuilder().setLabel("purchase").setValue("purchase").setDescription("Open a ticket for purchase"),
-            new StringSelectMenuOptionBuilder().setLabel("script").setValue("script").setDescription("Open a ticket for script"),
-            new StringSelectMenuOptionBuilder().setLabel("help").setValue("help").setDescription("Open a ticket for help"),
-            new StringSelectMenuOptionBuilder().setLabel("bugs").setValue("bugs").setDescription("Open a ticket for bugs")
-          )
-      ),
-    ],
-  };
-}
-
-async function openTicket(interaction, ticketType) {
-  const guild = interaction.guild;
-  if (!guild) {
-    return interaction.reply({
-      content: "This ticket system only works in a server.",
-      ephemeral: true,
-    });
-  }
-
-  const ticketChannel =
-    guild.channels.cache.get(TICKET_CHANNEL_ID) ||
-    (await guild.channels.fetch(TICKET_CHANNEL_ID).catch(() => null));
-
-  if (!ticketChannel) {
-    return interaction.reply({
-      content: "Ticket channel is not set or not found. Please configure `TICKET_CHANNEL_ID`.",
-      ephemeral: true,
-    });
-  }
-
-  const labelMap = {
-    support: "Support",
-    purchase: "Purchase",
-    script: "Script",
-    help: "Help",
-    bugs: "Bugs",
-  };
-
-  const ticketLabel = labelMap[ticketType] || "Support";
-
-  const ticketEmbed = new EmbedBuilder()
-    .setColor(TICKET_COLOR)
-    .setTitle(`🎫 New ${ticketLabel} Ticket`)
-    .setDescription(
-      `**User:** ${interaction.user.tag}\n` +
-        `**Discord ID:** ${interaction.user.id}\n` +
-        `**Type:** ${ticketLabel}\n` +
-        `**Created:** <t:${Math.floor(Date.now() / 1000)}:F>`
-    )
-    .addFields({
-      name: "Next step",
-      value: "A staff member will respond here shortly.",
-    })
-    .setTimestamp();
-
-  const ticketMessage = await ticketChannel.send({
-    content: `<@&${STAFF_ROLE_ID}> New ${ticketLabel.toLowerCase()} ticket`,
-    embeds: [ticketEmbed],
-  });
-
-  await interaction.reply({
-    content: `✅ Your ${ticketLabel.toLowerCase()} ticket was created in <#${TICKET_CHANNEL_ID}>.`,
-    ephemeral: true,
-  });
-
-  try {
-    await interaction.user.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(TICKET_COLOR)
-          .setTitle("🎫 Ticket Created")
-          .setDescription(
-            `Your ${ticketLabel.toLowerCase()} ticket was submitted successfully.\n\n` +
-              `Ticket channel: <#${TICKET_CHANNEL_ID}>\n` +
-              `Reference: ${ticketMessage.id}`
-          )
-          .setTimestamp(),
-      ],
-    }).catch(() => {});
-  } catch (err) {}
-}
-
 const commands = [
   new SlashCommandBuilder().setName("panel").setDescription("Send the Jayce Main customer panel"),
-  new SlashCommandBuilder().setName("ticketpanel").setDescription("Open the jayce.EXE ticket panel"),
   new SlashCommandBuilder().setName("adminpanel").setDescription("View the Jayce Main admin panel"),
   new SlashCommandBuilder().setName("announce").setDescription("Send an announcement").addStringOption((o) =>
     o.setName("message").setDescription("Announcement text").setRequired(true)
@@ -661,10 +562,6 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply(createLegacyPanel());
       }
 
-      if (interaction.commandName === "ticketpanel") {
-        return interaction.reply(createTicketPanel());
-      }
-
       if (interaction.commandName === "adminpanel") {
         return interaction.reply({
           embeds: [
@@ -701,23 +598,8 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
 
-    if (interaction.isStringSelectMenu() && interaction.customId === "ticket_select") {
-      const selected = interaction.values[0];
-      return openTicket(interaction, selected);
-    }
-
     if (interaction.isButton()) {
-      const ticketMap = {
-        ticket_support: "support",
-        ticket_purchase: "purchase",
-        ticket_script: "script",
-        ticket_help: "help",
-        ticket_bugs: "bugs",
-      };
-
-      if (ticketMap[interaction.customId]) {
-        return openTicket(interaction, ticketMap[interaction.customId]);
-      }
+      const member = interaction.member;
 
       if (interaction.customId === "jc_script") {
         if (isRateLimited(interaction.user.id, "script_send")) {
@@ -735,6 +617,13 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       if (interaction.customId === "jc_mobile_script") {
+        if (!hasRole(member, MOBILE_MAIN_ROLE_ID)) {
+          return replyWithHeart(interaction, {
+            content: "❌ You do not have permission to use the mobile panel.",
+            ephemeral: true,
+          });
+        }
+
         if (isRateLimited(interaction.user.id, "script_send_mobile")) {
           return replyWithHeart(interaction, {
             content: "♻️ Please wait before requesting another mobile script.",
@@ -907,4 +796,4 @@ if (!TOKEN) {
 
 loadDatabase();
 
-module.exports = { createLegacyPanel, createTicketPanel, openTicket };
+module.exports = { createLegacyPanel };
