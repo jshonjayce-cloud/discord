@@ -171,6 +171,14 @@ async function getGuildMember(guild, userId) {
   }
 }
 
+async function hasRequiredPanelRole(guild, userId) {
+  const member = await getGuildMember(guild, userId);
+
+  if (!member) return false;
+
+  return member.roles.cache.has(MOBILE_MAIN_ROLE_ID);
+}
+
 async function setScriptRoles(member, enabled, scriptType = "both") {
   const roleIds = [];
 
@@ -378,6 +386,15 @@ client.on("interactionCreate", async (interaction) => {
     // Customer panel buttons
     if (interaction.isButton()) {
       const userId = interaction.user.id;
+
+      const member = await getGuildMember(interaction.guild, userId);
+
+      if (!member || !member.roles.cache.has(MOBILE_MAIN_ROLE_ID)) {
+        return replyWithHeart(interaction, {
+          content: "You need the Mobile Main role to use these buttons.",
+          ephemeral: true,
+        });
+      }
 
       if (interaction.customId === "jc_register") {
         const modal = new ModalBuilder()
@@ -716,4 +733,27 @@ client.on("interactionCreate", async (interaction) => {
           content: `I couldn't DM ${user}. They may need to enable server DMs.`,
           ephemeral: true,
         });
-  
+      }
+    }
+
+    // other command branches omitted in snippet; existing logic continues below
+  } catch (error) {
+    console.error("[INTERACTION] Error:", error);
+
+    if (interaction && interaction.isRepliable && !interaction.replied) {
+      return interaction.reply({
+        content: "An unexpected error occurred.",
+        ephemeral: true,
+      });
+    }
+  }
+});
+
+// If you want to register commands when the bot starts:
+client.once("ready", () => {
+  registerCommands().catch((error) => {
+    console.error("[COMMANDS] Registration failed:", error);
+  });
+});
+
+client.login(TOKEN);
