@@ -15,6 +15,8 @@ const { Routes } = require("discord-api-types/v10");
 const { SlashCommandBuilder } = require("@discordjs/builders");
 
 const express = require("express");
+const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 
@@ -50,7 +52,7 @@ app.get("/", (_req, res) => {
 
 app.get("/health", (_req, res) => {
   res.status(200).json({
-    status: "online",
+    status: "ok",
     bot: "Jayce Main",
     discord: client.isReady(),
   });
@@ -59,6 +61,45 @@ app.get("/health", (_req, res) => {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[WEB] Listening on port ${PORT}`);
 });
+
+const KEEP_ALIVE_INTERVAL = 5 * 60 * 1000;
+
+function startKeepAlive() {
+  const urlStr = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+  const mod = urlStr.startsWith("https") ? https : http;
+
+  setInterval(() => {
+    const req = mod.get(urlStr, { timeout: 5000 }, (res) => {
+      let data = "";
+
+      res.on("data", (chunk) => {
+        data += chunk;
+      });
+
+      res.on("end", () => {
+        try {
+          const json = JSON.parse(data);
+          if (json.status === "ok") {
+            console.log(
+              "[KEEP-ALIVE] Ping successful — " +
+                new Date().toLocaleTimeString()
+            );
+          }
+        } catch {
+          // ignore invalid responses
+        }
+      });
+    });
+
+    req.on("error", (err) => {
+      console.log(
+        "[KEEP-ALIVE] Ping failed (expected if just started): " + err.message
+      );
+    });
+  }, KEEP_ALIVE_INTERVAL);
+}
+
+startKeepAlive();
 
 // ==================== DATABASE ====================
 let db = {
@@ -91,7 +132,7 @@ function loadDatabase() {
       db = {
         keys: loaded.keys || {},
         blacklisted: loaded.blacklisted || {},
-        hwids: loaded.hwids || {},
+        hwids: loaded.hwid || {},
         accounts: loaded.accounts || {},
         access: loaded.access || {},
       };
