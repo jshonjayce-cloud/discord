@@ -24,7 +24,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
-const STAFF_ROLE_ID = "1552637829815865414";
+const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || "1552637829815865414";
 const MOBILE_MAIN_ROLE_ID = process.env.MOBILE_MAIN_ROLE_ID || "1554321313332469800";
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -40,7 +40,14 @@ app.get("/", (_req, res) => res.status(200).send("🎃 Jayce Mobile is running! 
 app.get("/health", (_req, res) => {
   res.status(200).json({ status: "ok", bot: "Jayce Mobile", discord: client.isReady() });
 });
-app.listen(PORT, "0.0.0.0", () => console.log(`[WEB] Listening on port ${PORT}`));
+
+const server = app.listen(PORT, "0.0.0.0", () => {
+  console.log(`[WEB] Listening on port ${PORT}`);
+});
+
+server.on("error", (error) => {
+  console.error("[WEB] Server error:", error);
+});
 
 const KEEP_ALIVE_INTERVAL = 5 * 60 * 1000;
 function startKeepAlive() {
@@ -50,15 +57,23 @@ function startKeepAlive() {
   setInterval(() => {
     const req = mod.get(urlStr, { timeout: 5000 }, (res) => {
       let data = "";
-      res.on("data", (chunk) => { data += chunk; });
+      res.on("data", (chunk) => {
+        data += chunk;
+      });
       res.on("end", () => {
         try {
           const json = JSON.parse(data);
           if (json.status === "ok") {
             console.log("[KEEP-ALIVE] Ping successful — " + new Date().toLocaleTimeString());
           }
-        } catch {}
+        } catch {
+          // no-op: the server may return non-JSON content on startup
+        }
       });
+    });
+
+    req.on("timeout", () => {
+      req.destroy(new Error("keep-alive timeout"));
     });
 
     req.on("error", (err) => {
@@ -116,9 +131,14 @@ function makeEmbed(title, description) {
 }
 
 function replyWithHeart(interaction, options) {
+  if (!interaction || !interaction.isRepliable) {
+    return Promise.resolve();
+  }
+
   if (typeof options.content === "string" && !options.content.trimStart().startsWith("♡")) {
     options.content = `♡ ${options.content}`;
   }
+
   if (Array.isArray(options.embeds)) {
     options.embeds = options.embeds.map((embed) => {
       const title = embed.data?.title;
@@ -128,6 +148,11 @@ function replyWithHeart(interaction, options) {
       return embed;
     });
   }
+
+  if (interaction.replied || interaction.deferred) {
+    return interaction.followUp(options);
+  }
+
   return interaction.reply(options);
 }
 
@@ -170,15 +195,15 @@ async function sendScriptDM(user) {
 const commands = [
   new SlashCommandBuilder().setName("panel").setDescription("Send the Jayce Mobile customer panel"),
   new SlashCommandBuilder().setName("adminpanel").setDescription("View the Jayce Mobile admin panel"),
-  new SlashCommandBuilder().setName("announce").setDescription("Send an announcement").addStringOption((o) => o.setName("message").setDescription("Announcement text").setRequired(true)).addChannelOption((o) => o.setName("channel").setDescription("Channel to announce in")),
+  new SlashCommandBuilder().setName("announce").setDescription("Send an announcement").addStringOption((o) => o.setName("message").setDescription("Announcement text").setRequired(true)).addChannelOption((o) => o.setName("channel").setDescription("Channel to send the announcement to")),
   new SlashCommandBuilder().setName("generate-key").setDescription("Generate a Jayce access code").addUserOption((o) => o.setName("user").setDescription("User receiving the code").setRequired(true)),
   new SlashCommandBuilder().setName("mobile-script").setDescription("Send a buyer their mobile script").addUserOption((o) => o.setName("user").setDescription("Buyer receiving the script").setRequired(true)),
   new SlashCommandBuilder().setName("account").setDescription("View a user's Jayce account").addUserOption((o) => o.setName("user").setDescription("Account to inspect").setRequired(true)),
   new SlashCommandBuilder().setName("disableaccess").setDescription("Disable a user's Jayce access").addUserOption((o) => o.setName("user").setDescription("User to disable").setRequired(true)),
   new SlashCommandBuilder().setName("grantaccess").setDescription("Grant access to Jayce Mobile").addUserOption((o) => o.setName("user").setDescription("User to grant access").setRequired(true)),
-  new SlashCommandBuilder().setName("blacklist").setDescription("Blacklist a user").addUserOption((o) => o.setName("user").setDescription("User to blacklist").setRequired(true)).addStringOption((o) => o.setName("reason").setDescription("Reason for blacklist")),
+  new SlashCommandBuilder().setName("blacklist").setDescription("Blacklist a user").addUserOption((o) => o.setName("user").setDescription("User to blacklist").setRequired(true)).addStringOption((o) => o.setName("reason").setDescription("Blacklist reason").setRequired(false)),
   new SlashCommandBuilder().setName("unblacklist").setDescription("Remove a user's blacklist").addUserOption((o) => o.setName("user").setDescription("User to unblacklist").setRequired(true)),
-  new SlashCommandBuilder().setName("ban").setDescription("Ban a member from this server").addUserOption((o) => o.setName("user").setDescription("Member to ban").setRequired(true)).addStringOption((o) => o.setName("reason").setDescription("Reason for ban")),
+  new SlashCommandBuilder().setName("ban").setDescription("Ban a member from this server").addUserOption((o) => o.setName("user").setDescription("Member to ban").setRequired(true)).addStringOption((o) => o.setName("reason").setDescription("Ban reason").setRequired(false)),
   new SlashCommandBuilder().setName("lookup").setDescription("Look up a buyer").addStringOption((o) => o.setName("query").setDescription("Discord ID or Roblox username").setRequired(true)),
   new SlashCommandBuilder().setName("revoke").setDescription("Revoke a buyer's Jayce access").addUserOption((o) => o.setName("user").setDescription("Buyer to revoke").setRequired(true)),
   new SlashCommandBuilder().setName("forceresethwid").setDescription("Clear a buyer's locally saved HWID").addUserOption((o) => o.setName("user").setDescription("Buyer whose HWID should be cleared").setRequired(true)),
@@ -418,12 +443,22 @@ client.on("interactionCreate", async (interaction) => {
 
     if (commandName === "lookup") {
       const query = interaction.options.getString("query", true).trim();
-      const account = Object.entries(db.accounts).find(([_, value]) => value.username?.toLowerCase() === query.toLowerCase() || value.discordTag === query || _ === query);
+      const account = Object.entries(db.accounts).find(([id, value]) => {
+        const matchesUsername = value.username?.toLowerCase() === query.toLowerCase();
+        const matchesDiscordTag = value.discordTag === query;
+        const matchesUserId = id === query;
+        return matchesUsername || matchesDiscordTag || matchesUserId;
+      });
+
       if (!account) {
         return replyWithHeart(interaction, { content: "No buyer found for that lookup.", ephemeral: true });
       }
+
       const [userId, record] = account;
-      return replyWithHeart(interaction, { content: `**User ID:** ${userId}\n**Roblox:** ${record.username}\n**Discord:** ${record.discordTag}`, ephemeral: true });
+      return replyWithHeart(interaction, {
+        content: `**User ID:** ${userId}\n**Roblox:** ${record.username}\n**Discord:** ${record.discordTag}`,
+        ephemeral: true,
+      });
     }
 
     if (commandName === "revoke") {
