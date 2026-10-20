@@ -25,7 +25,8 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
 const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID || "1552637829815865414";
-const MOBILE_MAIN_ROLE_ID = process.env.MOBILE_MAIN_ROLE_ID || "1554321313332469800";
+const MOBILE_ROLE_ID = process.env.MOBILE_MAIN_ROLE_ID || "1554321313332469800";
+const LOADER_URL = "https://flowauth.net/v1/loaders/a98aeecca217266364e1eb0396c7a283.lua";
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const DB_FILE = path.join(DATA_DIR, "database.json");
@@ -40,14 +41,7 @@ app.get("/", (_req, res) => res.status(200).send("🎃 Jayce Mobile is running! 
 app.get("/health", (_req, res) => {
   res.status(200).json({ status: "ok", bot: "Jayce Mobile", discord: client.isReady() });
 });
-
-const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log(`[WEB] Listening on port ${PORT}`);
-});
-
-server.on("error", (error) => {
-  console.error("[WEB] Server error:", error);
-});
+app.listen(PORT, "0.0.0.0", () => console.log(`[WEB] Listening on port ${PORT}`));
 
 const KEEP_ALIVE_INTERVAL = 5 * 60 * 1000;
 function startKeepAlive() {
@@ -66,9 +60,7 @@ function startKeepAlive() {
           if (json.status === "ok") {
             console.log("[KEEP-ALIVE] Ping successful — " + new Date().toLocaleTimeString());
           }
-        } catch {
-          // no-op: the server may return non-JSON content on startup
-        }
+        } catch {}
       });
     });
 
@@ -85,8 +77,8 @@ startKeepAlive();
 
 let db = {
   accounts: {},
-  keys: {},
   access: {},
+  keys: {},
   blacklisted: {},
 };
 
@@ -108,8 +100,8 @@ function loadDatabase() {
       const loaded = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
       db = {
         accounts: loaded.accounts || {},
-        keys: loaded.keys || {},
         access: loaded.access || {},
+        keys: loaded.keys || {},
         blacklisted: loaded.blacklisted || {},
       };
     }
@@ -126,7 +118,7 @@ function makeEmbed(title, description) {
     .setColor(PANEL_COLOR)
     .setTitle(title)
     .setDescription(description)
-    .setFooter({ text: "🎃 jayce ♡ spooky & secure 🦇" })
+    .setFooter({ text: "jayce ♡ soft & secure" })
     .setTimestamp();
 }
 
@@ -178,6 +170,14 @@ function isStaff(member) {
   return Boolean(member?.roles?.cache?.has(STAFF_ROLE_ID));
 }
 
+function getAccount(userId) {
+  return db.accounts[userId] || null;
+}
+
+function hasOneAccount(userId) {
+  return Boolean(db.accounts[userId]);
+}
+
 function isBlacklisted(userId) {
   return Boolean(db.blacklisted[userId]);
 }
@@ -186,27 +186,62 @@ function accessEnabled(userId) {
   return db.access[userId] !== false;
 }
 
+function generateKeyForUser(userId) {
+  let code;
+  do {
+    code = makeCode();
+  } while (db.keys[code]);
+
+  db.keys[code] = { userId, createdAt: new Date().toISOString(), redeemed: false };
+  db.accounts[userId].key = code;
+  db.accounts[userId].keyCreatedAt = Date.now();
+  saveDatabase();
+  return code;
+}
+
 async function sendScriptDM(user) {
-  const script = `loadstring(game:HttpGet("https://flowauth.net/v1/loaders/a98aeecca217266364e1eb0396c7a283.lua"))()`;
+  const script = `loadstring(game:HttpGet("${LOADER_URL}"))()`;
   const embed = makeEmbed("📱 Jayce Mobile Main", "Here is your mobile script. Keep it private. ♡");
-  await user.send({ embeds: [embed], content: `\`\`\`lua\n${script}\n\`\`\`` });
+  await user.send({
+    embeds: [embed],
+    content: `\`\`\`lua\n${script}\n\`\`\``,
+  });
+}
+
+function makePanel() {
+  const embed = makeEmbed(
+    "🎃 JAYCE MOBILE 🦇",
+    [
+      "**Welcome to Jayce Mobile!**",
+      "",
+      "🎀 **Register** — link your Roblox username",
+      "📱 **Get Key** — receive your access key",
+      "🧩 **Mobile** — send the mobile loader",
+      "🛠️ **Reset HWID** — reset your device lock",
+      "",
+      "*Choose an option below, boo! ♡*",
+    ].join("\n")
+  );
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("jc_register").setLabel("Register").setEmoji("🎀").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("jc_key").setLabel("Get Key").setEmoji("🔑").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("jc_mobile").setLabel("Mobile").setEmoji("📱").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("jc_resethwid").setLabel("Reset HWID").setEmoji("🛠️").setStyle(ButtonStyle.Danger)
+  );
+
+  return { embeds: [embed], components: [row] };
 }
 
 const commands = [
   new SlashCommandBuilder().setName("panel").setDescription("Send the Jayce Mobile customer panel"),
   new SlashCommandBuilder().setName("adminpanel").setDescription("View the Jayce Mobile admin panel"),
-  new SlashCommandBuilder().setName("announce").setDescription("Send an announcement").addStringOption((o) => o.setName("message").setDescription("Announcement text").setRequired(true)).addChannelOption((o) => o.setName("channel").setDescription("Channel to announce in")),
-  new SlashCommandBuilder().setName("generate-key").setDescription("Generate a Jayce access code").addUserOption((o) => o.setName("user").setDescription("User receiving the code").setRequired(true)),
-  new SlashCommandBuilder().setName("mobile-script").setDescription("Send a buyer their mobile script").addUserOption((o) => o.setName("user").setDescription("Buyer receiving the script").setRequired(true)),
+  new SlashCommandBuilder().setName("generate-key").setDescription("Generate a key for a user").addUserOption((o) => o.setName("user").setDescription("User receiving the key").setRequired(true)),
   new SlashCommandBuilder().setName("account").setDescription("View a user's Jayce account").addUserOption((o) => o.setName("user").setDescription("Account to inspect").setRequired(true)),
-  new SlashCommandBuilder().setName("disableaccess").setDescription("Disable a user's Jayce access").addUserOption((o) => o.setName("user").setDescription("User to disable").setRequired(true)),
   new SlashCommandBuilder().setName("grantaccess").setDescription("Grant access to Jayce Mobile").addUserOption((o) => o.setName("user").setDescription("User to grant access").setRequired(true)),
-  new SlashCommandBuilder().setName("blacklist").setDescription("Blacklist a user").addUserOption((o) => o.setName("user").setDescription("User to blacklist").setRequired(true)).addStringOption((o) => o.setName("reason").setDescription("Reason for blacklist")),
-  new SlashCommandBuilder().setName("unblacklist").setDescription("Remove a user's blacklist").addUserOption((o) => o.setName("user").setDescription("User to unblacklist").setRequired(true)),
-  new SlashCommandBuilder().setName("ban").setDescription("Ban a member from this server").addUserOption((o) => o.setName("user").setDescription("Member to ban").setRequired(true)).addStringOption((o) => o.setName("reason").setDescription("Reason for ban")),
+  new SlashCommandBuilder().setName("disableaccess").setDescription("Disable a user's Jayce access").addUserOption((o) => o.setName("user").setDescription("User to disable").setRequired(true)),
   new SlashCommandBuilder().setName("lookup").setDescription("Look up a buyer").addStringOption((o) => o.setName("query").setDescription("Discord ID or Roblox username").setRequired(true)),
   new SlashCommandBuilder().setName("revoke").setDescription("Revoke a buyer's Jayce access").addUserOption((o) => o.setName("user").setDescription("Buyer to revoke").setRequired(true)),
-  new SlashCommandBuilder().setName("forceresethwid").setDescription("Clear a buyer's locally saved HWID").addUserOption((o) => o.setName("user").setDescription("Buyer whose HWID should be cleared").setRequired(true)),
 ].map((command) => command.toJSON());
 
 async function registerCommands() {
@@ -226,7 +261,7 @@ client.on("interactionCreate", async (interaction) => {
       const userId = interaction.user.id;
       const member = await getGuildMember(interaction.guild, userId);
 
-      if (!member || !member.roles.cache.has(MOBILE_MAIN_ROLE_ID)) {
+      if (!member || !member.roles.cache.has(MOBILE_ROLE_ID)) {
         return replyWithHeart(interaction, {
           content: "You need the Mobile Main role to use these buttons.",
           ephemeral: true,
@@ -234,7 +269,17 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       if (interaction.customId === "jc_register") {
-        const modal = new ModalBuilder().setCustomId("jc_register_modal").setTitle("♡ Jayce Registration");
+        if (hasOneAccount(userId)) {
+          return replyWithHeart(interaction, {
+            content: "You already have one account. You can only make one account.",
+            ephemeral: true,
+          });
+        }
+
+        const modal = new ModalBuilder()
+          .setCustomId("jc_register_modal")
+          .setTitle("♡ Jayce Registration");
+
         const usernameInput = new TextInputBuilder()
           .setCustomId("roblox_username")
           .setLabel("Your Roblox username")
@@ -247,6 +292,31 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.showModal(modal);
       }
 
+      if (interaction.customId === "jc_key") {
+        const record = getAccount(userId);
+        if (!record) {
+          return replyWithHeart(interaction, {
+            content: "You do not have an account yet. Use Register first.",
+            ephemeral: true,
+          });
+        }
+
+        try {
+          await interaction.user.send({
+            embeds: [makeEmbed("🔑 Your Jayce Key", `Your key is:\n\n\`${record.key}\`\n\nKeep it private.`)],
+          });
+          return replyWithHeart(interaction, {
+            content: "Your key was sent to your DMs.",
+            ephemeral: true,
+          });
+        } catch {
+          return replyWithHeart(interaction, {
+            content: `I could not DM you. Your key is:\n\`${record.key}\``,
+            ephemeral: true,
+          });
+        }
+      }
+
       if (interaction.customId === "jc_mobile") {
         if (isBlacklisted(userId)) {
           return replyWithHeart(interaction, { content: "⛔ Your account is blacklisted.", ephemeral: true });
@@ -255,12 +325,31 @@ client.on("interactionCreate", async (interaction) => {
           return replyWithHeart(interaction, { content: "🔒 Your Jayce access is disabled. Contact staff.", ephemeral: true });
         }
 
+        const record = getAccount(userId);
+        if (!record || !record.key) {
+          return replyWithHeart(interaction, {
+            content: "Register first and generate your key before using Mobile.",
+            ephemeral: true,
+          });
+        }
+
         try {
           await sendScriptDM(interaction.user);
-          return replyWithHeart(interaction, { content: "📱 Mobile Main was sent to your DMs.", ephemeral: true });
+          return replyWithHeart(interaction, { content: "📱 Mobile loader was sent to your DMs.", ephemeral: true });
         } catch {
           return replyWithHeart(interaction, { content: "I couldn't DM you. Enable server DMs and try again.", ephemeral: true });
         }
+      }
+
+      if (interaction.customId === "jc_resethwid") {
+        const record = getAccount(userId);
+        if (!record) {
+          return replyWithHeart(interaction, { content: "You do not have an account yet. Use Register first.", ephemeral: true });
+        }
+
+        record.hwid = null;
+        saveDatabase();
+        return replyWithHeart(interaction, { content: "♡ HWID reset complete.", ephemeral: true });
       }
 
       return;
@@ -268,19 +357,41 @@ client.on("interactionCreate", async (interaction) => {
 
     if (interaction.isModalSubmit() && interaction.customId === "jc_register_modal") {
       const username = interaction.fields.getTextInputValue("roblox_username").trim();
+      const userId = interaction.user.id;
+
       if (!username) {
         return replyWithHeart(interaction, { content: "Please enter a valid username.", ephemeral: true });
       }
 
-      db.accounts[interaction.user.id] = {
+      if (hasOneAccount(userId)) {
+        return replyWithHeart(interaction, {
+          content: "You already have one account. You can only make one account.",
+          ephemeral: true,
+        });
+      }
+
+      const key = makeCode();
+      db.accounts[userId] = {
         username,
+        key,
+        hwid: null,
         registeredAt: new Date().toISOString(),
         discordTag: interaction.user.tag,
       };
+      db.access[userId] = true;
+      db.keys[key] = { userId, createdAt: new Date().toISOString(), redeemed: false };
       saveDatabase();
 
+      try {
+        await interaction.user.send({
+          embeds: [makeEmbed("♡ Registration Complete", `**Roblox username:** ${username}\n**Discord:** ${interaction.user.tag}\n**Key:** \`${key}\``)],
+        });
+      } catch {
+        // no-op: DM may be blocked, but the account still exists
+      }
+
       return replyWithHeart(interaction, {
-        embeds: [makeEmbed("♡ Registration Complete", `**Roblox username:** ${username}\n**Discord:** ${interaction.user.tag}`)],
+        embeds: [makeEmbed("♡ Registration Complete", `**Roblox username:** ${username}\n**Discord:** ${interaction.user.tag}\n**Key:** \`${key}\``)],
         ephemeral: true,
       });
     }
@@ -294,21 +405,7 @@ client.on("interactionCreate", async (interaction) => {
     const commandName = interaction.commandName;
 
     if (commandName === "panel") {
-      const embed = makeEmbed("🎃 JAYCE MOBILE 🦇", [
-        "**Welcome to Jayce Mobile!**",
-        "",
-        "🎀 **Register** — link your Roblox username",
-        "📱 **Get Mobile Script** — receive your mobile loader",
-        "",
-        "*Choose an option below, boo! ♡*",
-      ].join("\n"));
-
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("jc_register").setLabel("Register").setEmoji("🎀").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("jc_mobile").setLabel("Get Mobile Script").setEmoji("📱").setStyle(ButtonStyle.Success)
-      );
-
-      return replyWithHeart(interaction, { embeds: [embed], components: [row] });
+      return replyWithHeart(interaction, makePanel());
     }
 
     if (commandName === "adminpanel") {
@@ -319,96 +416,48 @@ client.on("interactionCreate", async (interaction) => {
         "`/disableaccess` — disable access",
         "`/generate-key` — generate a key",
         "",
-        "**Scripts**",
-        "`/mobile-script` — send the mobile script",
-        "`/panel` — post the customer panel",
-        "",
-        "**Moderation**",
-        "`/blacklist` — blacklist a user",
-        "`/unblacklist` — remove a blacklist",
-        "`/ban` — ban a member",
-        "`/revoke` — revoke access",
-        "",
         "**Buyer tools**",
         "`/lookup` — search buyer details",
-        "`/forceresethwid` — clear locally saved HWID",
+        "`/revoke` — revoke access",
       ].join("\n"));
 
       return replyWithHeart(interaction, { embeds: [embed], ephemeral: true });
     }
 
-    if (commandName === "announce") {
-      const message = interaction.options.getString("message", true);
-      const channel = interaction.options.getChannel("channel") || interaction.channel;
-
-      if (!channel?.isTextBased() || !channel.send) {
-        return replyWithHeart(interaction, { content: "Please select a text channel.", ephemeral: true });
-      }
-
-      await channel.send({ embeds: [makeEmbed("♡ Jayce Mobile Announcement", message)] });
-      return replyWithHeart(interaction, { content: `Announcement sent to ${channel}.`, ephemeral: true });
-    }
-
     if (commandName === "generate-key") {
       const user = interaction.options.getUser("user", true);
-      let code;
-      do {
-        code = makeCode();
-      } while (db.keys[code]);
+      const record = getAccount(user.id);
 
-      db.keys[code] = { userId: user.id, createdAt: new Date().toISOString(), redeemed: false };
-      saveDatabase();
-
-      try {
-        await user.send({ embeds: [makeEmbed("♡ Your Jayce Access Code", `Your access code is:\n\n\`${code}\`\n\nKeep it private.`)] });
-        return replyWithHeart(interaction, { content: `Access code generated and sent to ${user}.`, ephemeral: true });
-      } catch {
-        return replyWithHeart(interaction, { content: `I couldn't DM ${user}. Their code is:\n\`${code}\``, ephemeral: true });
-      }
-    }
-
-    if (commandName === "mobile-script") {
-      const user = interaction.options.getUser("user", true);
-      const member = await getGuildMember(interaction.guild, user.id);
-
-      if (isBlacklisted(user.id)) {
-        return replyWithHeart(interaction, { content: "⛔ That user is blacklisted.", ephemeral: true });
-      }
-      if (!accessEnabled(user.id)) {
-        return replyWithHeart(interaction, { content: "🔒 That user's Jayce access is disabled.", ephemeral: true });
-      }
-      if (!member) {
-        return replyWithHeart(interaction, { content: "That user isn't a member of this server.", ephemeral: true });
-      }
-      if (!member.roles.cache.has(MOBILE_MAIN_ROLE_ID)) {
-        return replyWithHeart(interaction, { content: "That user doesn't have the required Mobile Main role.", ephemeral: true });
-      }
-
-      try {
-        await sendScriptDM(user);
-        return replyWithHeart(interaction, { content: `♡ Sent the Mobile script to ${user}.`, ephemeral: true });
-      } catch {
-        return replyWithHeart(interaction, { content: `I couldn't DM ${user}. They may need to enable server DMs.`, ephemeral: true });
-      }
-    }
-
-    if (commandName === "account") {
-      const user = interaction.options.getUser("user", true);
-      const record = db.accounts[user.id];
       if (!record) {
         return replyWithHeart(interaction, { content: "No account found for that user.", ephemeral: true });
       }
+
+      const key = generateKeyForUser(user.id);
+      try {
+        await user.send({
+          embeds: [makeEmbed("🔑 New Jayce Key", `Your key is:\n\n\`${key}\``)],
+        });
+      } catch {
+        // no-op
+      }
+
       return replyWithHeart(interaction, {
-        embeds: [makeEmbed("♡ Jayce Account", `**Discord:** ${user.tag}\n**Roblox:** ${record.username}\n**Registered:** ${record.registeredAt}`)],
+        content: `New key generated for ${user}: \`${key}\``,
         ephemeral: true,
       });
     }
 
-    if (commandName === "disableaccess") {
+    if (commandName === "account") {
       const user = interaction.options.getUser("user", true);
-      db.access[user.id] = false;
-      saveDatabase();
-      return replyWithHeart(interaction, { content: `Access disabled for ${user}.`, ephemeral: true });
+      const record = getAccount(user.id);
+      if (!record) {
+        return replyWithHeart(interaction, { content: "No account found for that user.", ephemeral: true });
+      }
+
+      return replyWithHeart(interaction, {
+        embeds: [makeEmbed("♡ Jayce Account", `**Discord:** ${user.tag}\n**Roblox:** ${record.username}\n**Key:** \`${record.key}\`\n**HWID:** ${record.hwid ? "Locked" : "Open"}`)],
+        ephemeral: true,
+      });
     }
 
     if (commandName === "grantaccess") {
@@ -418,36 +467,20 @@ client.on("interactionCreate", async (interaction) => {
       return replyWithHeart(interaction, { content: `Access granted for ${user}.`, ephemeral: true });
     }
 
-    if (commandName === "blacklist") {
+    if (commandName === "disableaccess") {
       const user = interaction.options.getUser("user", true);
-      const reason = interaction.options.getString("reason") || "No reason given";
-      db.blacklisted[user.id] = reason;
+      db.access[user.id] = false;
       saveDatabase();
-      return replyWithHeart(interaction, { content: `Blacklisted ${user}.`, ephemeral: true });
-    }
-
-    if (commandName === "unblacklist") {
-      const user = interaction.options.getUser("user", true);
-      delete db.blacklisted[user.id];
-      saveDatabase();
-      return replyWithHeart(interaction, { content: `Removed ${user} from blacklist.`, ephemeral: true });
-    }
-
-    if (commandName === "ban") {
-      const user = interaction.options.getUser("user", true);
-      const reason = interaction.options.getString("reason") || "No reason given";
-      const member = await getGuildMember(interaction.guild, user.id);
-      if (member) await member.ban({ reason });
-      return replyWithHeart(interaction, { content: `Banned ${user}.`, ephemeral: true });
+      return replyWithHeart(interaction, { content: `Access disabled for ${user}.`, ephemeral: true });
     }
 
     if (commandName === "lookup") {
       const query = interaction.options.getString("query", true).trim();
       const account = Object.entries(db.accounts).find(([id, value]) => {
-        const matchesUsername = value.username?.toLowerCase() === query.toLowerCase();
-        const matchesDiscordTag = value.discordTag === query;
-        const matchesUserId = id === query;
-        return matchesUsername || matchesDiscordTag || matchesUserId;
+        const matchUsername = value.username?.toLowerCase() === query.toLowerCase();
+        const matchDiscord = value.discordTag === query;
+        const matchId = id === query;
+        return matchUsername || matchDiscord || matchId;
       });
 
       if (!account) {
@@ -463,15 +496,10 @@ client.on("interactionCreate", async (interaction) => {
 
     if (commandName === "revoke") {
       const user = interaction.options.getUser("user", true);
-      db.access[user.id] = false;
       delete db.accounts[user.id];
+      db.access[user.id] = false;
       saveDatabase();
       return replyWithHeart(interaction, { content: `Access revoked for ${user}.`, ephemeral: true });
-    }
-
-    if (commandName === "forceresethwid") {
-      const user = interaction.options.getUser("user", true);
-      return replyWithHeart(interaction, { content: `HWID reset requested for ${user}.`, ephemeral: true });
     }
   } catch (error) {
     console.error("[INTERACTION] Error:", error);
